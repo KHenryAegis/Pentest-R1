@@ -1,0 +1,101 @@
+{
+    "initial_prompt": "The G0rmint VM is a boot2root Capture The Flag (CTF) challenge. The objective is to identify vulnerabilities, gain initial access to the target machine (G0rmint VM), escalate privileges, and retrieve the flag from the root directory. The attacker machine is Kali Linux 2024. The target VM's IP address (e.g., 192.168.1.134, which will be referred to as $TARGET_IP in the steps) needs to be discovered by the user based on their network setup.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify the G0rmint VM's IP address on the local network. This IP will be used as $TARGET_IP. Adjust the range if your network is different from the common 192.168.1.0/24.",
+            "command": "sudo netdiscover -r 192.168.1.0/24",
+            "result": "Netdiscover scans the specified network range and lists active hosts. Identify the IP address of the G0rmint VM from the output (e.g., 192.168.1.134). Set this IP as $TARGET_IP for subsequent commands. For example: export TARGET_IP=192.168.1.134 (run in your terminal, not part of this step's command)."
+        },
+        {
+            "step_number": 2,
+            "thought": "Perform a comprehensive TCP port scan on $TARGET_IP to identify all open ports and running services, saving the output for review.",
+            "command": "nmap -sV -p- $TARGET_IP -oN nmap_scan.txt",
+            "result": "Nmap scans all 65535 TCP ports on $TARGET_IP. The output, also saved to `nmap_scan.txt`, reveals open ports and their service versions. Port 80 (HTTP), typically running a web server like Apache, is expected to be open and will be the initial focus."
+        },
+        {
+            "step_number": 3,
+            "thought": "Access the web server's root page on $TARGET_IP via HTTP to check for any visible content. The -s flag silences curl's progress meter.",
+            "command": "curl -s http://$TARGET_IP/",
+            "result": "The command fetches and displays the HTML content of the web server's root page. Often in CTFs, this page is blank or a default server page, suggesting that interesting content is located in non-obvious paths."
+        },
+        {
+            "step_number": 4,
+            "thought": "Use `dirb` with a common wordlist to discover hidden directories or files on the web server at $TARGET_IP, starting from the root. Output is saved.",
+            "command": "dirb http://$TARGET_IP/ /usr/share/dirb/wordlists/common.txt -o dirb_root_scan.txt",
+            "result": "`dirb` scans for common web directories and files using `/usr/share/dirb/wordlists/common.txt`. The findings are saved to `dirb_root_scan.txt`. This initial scan may not reveal critical paths directly but is a standard enumeration step. It often leads to checking `robots.txt`."
+        },
+        {
+            "step_number": 5,
+            "thought": "Inspect the `robots.txt` file on the web server. This file can inadvertently reveal paths to hidden or administrative sections of a website.",
+            "command": "curl -s http://$TARGET_IP/robots.txt",
+            "result": "The content of `robots.txt` is displayed. A line such as `Disallow: /g0rmint/` indicates the existence of a directory named `/g0rmint/` that the website owner intended to hide from web crawlers."
+        },
+        {
+            "step_number": 6,
+            "thought": "Explore the `/g0rmint/` directory discovered via `robots.txt` to investigate its content. The -L flag ensures `curl` follows any redirects.",
+            "command": "curl -sL http://$TARGET_IP/g0rmint/",
+            "result": "The command fetches and displays the content of `http://$TARGET_IP/g0rmint/`. This directory is expected to host a web application, often presenting a login page (e.g., `login.php`)."
+        },
+        {
+            "step_number": 7,
+            "thought": "Examine the HTML source code of the login page (e.g., `login.php` if identified in the previous step) for comments, hidden fields, or script references that might provide further clues.",
+            "command": "curl -sL http://$TARGET_IP/g0rmint/login.php",
+            "result": "The HTML source code of `http://$TARGET_IP/g0rmint/login.php` is displayed. A careful review of the source code may reveal developer comments or JavaScript snippets pointing to another hidden path, such as `/s3cretbackupdirectory/`."
+        },
+        {
+            "step_number": 8,
+            "thought": "Enumerate the newly discovered `/s3cretbackupdirectory/` path using `dirb` to find any exposed files, particularly backups or sensitive information.",
+            "command": "dirb http://$TARGET_IP/s3cretbackupdirectory/ /usr/share/dirb/wordlists/common.txt -o dirb_backup_scan.txt",
+            "result": "`dirb` scans `http://$TARGET_IP/s3cretbackupdirectory/` using `common.txt`. The findings are saved to `dirb_backup_scan.txt`. This scan is expected to uncover a file named `secret.txt`."
+        },
+        {
+            "step_number": 9,
+            "thought": "Retrieve and examine the contents of the `secret.txt` file found in the `/s3cretbackupdirectory/`, as it likely contains critical information like credentials or hashes.",
+            "command": "curl -s http://$TARGET_IP/s3cretbackupdirectory/secret.txt",
+            "result": "The content of `secret.txt` is displayed. It is expected to contain an MD5 hash, for example: `e58a740f9cce6f786ed7e7d01a9a24d8`."
+        },
+        {
+            "step_number": 10,
+            "thought": "Save the discovered MD5 hash into a file. This file will be used as input for a hash cracking tool like John the Ripper.",
+            "command": "echo \"e58a740f9cce6f786ed7e7d01a9a24d8\" > g0rmint_hash.txt",
+            "result": "The MD5 hash `e58a740f9cce6f786ed7e7d01a9a24d8` is saved to the file `g0rmint_hash.txt` in the current working directory."
+        },
+        {
+            "step_number": 11,
+            "thought": "Ensure the `rockyou.txt` wordlist is available for John the Ripper. If it's compressed as `rockyou.txt.gz` (common in Kali), it needs to be decompressed. This command handles the check and decompression if needed.",
+            "command": "[ ! -f /usr/share/wordlists/rockyou.txt ] && [ -f /usr/share/wordlists/rockyou.txt.gz ] && sudo gunzip /usr/share/wordlists/rockyou.txt.gz || echo \"rockyou.txt is ready or rockyou.txt.gz not found/decompression not needed.\"",
+            "result": "The command checks for `/usr/share/wordlists/rockyou.txt`. If it doesn't exist but `/usr/share/wordlists/rockyou.txt.gz` does, `sudo gunzip` is executed to decompress it. Otherwise, a message indicates the wordlist's status. `/usr/share/wordlists/rockyou.txt` should now be available."
+        },
+        {
+            "step_number": 12,
+            "thought": "Use John the Ripper with the `rockyou.txt` wordlist to crack the MD5 hash stored in `g0rmint_hash.txt`. The `--format=raw-MD5` flag specifies the hash type.",
+            "command": "john --wordlist=/usr/share/wordlists/rockyou.txt --format=raw-MD5 g0rmint_hash.txt",
+            "result": "John the Ripper begins the cracking process against `g0rmint_hash.txt`. This may take some time. If successful, John stores the cracked password in its pot file (`~/.john/john.pot` by default). This command itself doesn't output the password directly upon completion."
+        },
+        {
+            "step_number": 13,
+            "thought": "Display the plaintext password previously cracked and stored by John the Ripper for the hash in `g0rmint_hash.txt`.",
+            "command": "john --show --format=raw-MD5 g0rmint_hash.txt",
+            "result": "John displays the cracked password associated with the hash. The output will be similar to `e58a740f9cce6f786ed7e7d01a9a24d8:tayyab123` or `tayyab123` followed by the hash in parentheses. This reveals the plaintext password as `tayyab123`."
+        },
+        {
+            "step_number": 14,
+            "thought": "Attempt to log in to the target machine ($TARGET_IP) via SSH using the username `g0rmint` (inferred from contextual clues like the `/g0rmint/` directory) and the cracked password `tayyab123`.",
+            "command": "ssh g0rmint@$TARGET_IP",
+            "result": "The SSH client attempts to connect to $TARGET_IP as user `g0rmint`. When prompted for the password, enter `tayyab123`. A successful login grants a command-line shell as the `g0rmint` user on the G0rmint VM."
+        },
+        {
+            "step_number": 15,
+            "thought": "Attempt to escalate privileges from the `g0rmint` user to `root` using the `sudo -i` command. This will prompt for the `g0rmint` user's password again.",
+            "command": "sudo -i",
+            "result": "The system prompts for `g0rmint`'s password to execute `sudo -i`. Enter `tayyab123`. If the `g0rmint` user is configured with sudo privileges and the password is correct, the shell session will be elevated to `root`, typically indicated by a root prompt (e.g., `root@g0rmintvm#`)."
+        },
+        {
+            "step_number": 16,
+            "thought": "With root privileges, navigate to the `/root` directory (if not already there) and read the contents of the flag file, which is commonly named `flag.txt`.",
+            "command": "cat /root/flag.txt",
+            "result": "The command displays the content of `/root/flag.txt`. This is the final objective, and the file usually contains a congratulatory message confirming the successful completion of the CTF challenge, for example: 'Congratulations! You have successfully completed the G0rmint VM challenge!'"
+        }
+    ]
+}

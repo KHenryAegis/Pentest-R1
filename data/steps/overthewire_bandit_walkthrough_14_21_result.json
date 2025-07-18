@@ -1,0 +1,161 @@
+{
+    "initial_prompt": "Objective: Complete OverTheWire Bandit wargame levels 14-21. Attack Machine: Kali 2024. Target Machine: Bandit server (e.g., bandit.labs.overthewire.org, port 2220). This walkthrough starts assuming an active SSH session as user `bandit14` on the target server, and subsequent commands are executed on the Bandit server via SSH connections to localhost for leveling up.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Retrieve the password for the current level (bandit14). This password is required to authenticate to a service for the next level's password.",
+            "command": "cat /etc/bandit_pass/bandit14",
+            "result": "The command displays the content of the bandit14 password file. The password for bandit14 is `4wcYUJFw0k0XLShlDzztnTBHiqxU3b3e`."
+        },
+        {
+            "step_number": 2,
+            "thought": "Submit the bandit14 password to the service listening on localhost port 30000 to obtain the bandit15 password.",
+            "command": "echo \"4wcYUJFw0k0XLShlDzztnTBHiqxU3b3e\" | nc localhost 30000",
+            "result": "The bandit14 password is sent to `localhost:30000`. The service responds with the bandit15 password: `BfMYroe26WYalil77FoDi9qh59eK5xNr`."
+        },
+        {
+            "step_number": 3,
+            "thought": "Log in to the bandit15 account using the obtained password.",
+            "command": "ssh bandit15@localhost",
+            "result": "Initiates an SSH connection to bandit15 on localhost. Enter the password `BfMYroe26WYalil77FoDi9qh59eK5xNr` when prompted. Successful login grants access to the bandit15 shell."
+        },
+        {
+            "step_number": 4,
+            "thought": "Submit the bandit15 password to the SSL-encrypted service on localhost port 30001 to retrieve the bandit16 password.",
+            "command": "echo \"BfMYroe26WYalil77FoDi9qh59eK5xNr\" | openssl s_client -connect localhost:30001 -quiet 2>/dev/null",
+            "result": "The bandit15 password is sent over an SSL connection to `localhost:30001`. The service responds with the bandit16 password: `cluFn7wTiGryunymYOu4RcffSxQluehd`."
+        },
+        {
+            "step_number": 5,
+            "thought": "Log in to the bandit16 account using the obtained password.",
+            "command": "ssh bandit16@localhost",
+            "result": "Initiates an SSH connection to bandit16 on localhost. Enter the password `cluFn7wTiGryunymYOu4RcffSxQluehd` when prompted. Successful login grants access to the bandit16 shell."
+        },
+        {
+            "step_number": 6,
+            "thought": "Scan localhost for open ports in the range 31000-32000 to find the port for the next challenge. The level hint suggests credentials are on a port in this range.",
+            "command": "nmap -sV -p 31000-32000 localhost",
+            "result": "Nmap scans ports 31000-32000 on localhost. The output typically reveals an open SSL port (e.g., 31790/tcp open ssl/unknown) and possibly a non-SSL port. The SSL port is the target for the next step."
+        },
+        {
+            "step_number": 7,
+            "thought": "Create a temporary directory to store the private key for bandit17, as write permissions might be restricted in the home directory.",
+            "command": "mkdir /tmp/bandit17_key",
+            "result": "A directory named `bandit17_key` is created in `/tmp`. This directory will be used to store the SSH private key."
+        },
+        {
+            "step_number": 8,
+            "thought": "Connect to the identified SSL port (e.g., 31790), submit the bandit16 password, and save the received RSA private key.",
+            "command": "echo \"cluFn7wTiGryunymYOu4RcffSxQluehd\" | openssl s_client -connect localhost:31790 -quiet 2>/dev/null > /tmp/bandit17_key/sshkey.private",
+            "result": "The bandit16 password is sent to the SSL service on `localhost:31790`. The service responds with an RSA private key, which is saved to `/tmp/bandit17_key/sshkey.private`."
+        },
+        {
+            "step_number": 9,
+            "thought": "Set the correct permissions for the SSH private key file. SSH requires private keys to have restricted permissions (read/write for owner only).",
+            "command": "chmod 600 /tmp/bandit17_key/sshkey.private",
+            "result": "File permissions for `/tmp/bandit17_key/sshkey.private` are set to `600`. This is necessary for SSH to use the private key."
+        },
+        {
+            "step_number": 10,
+            "thought": "Log in to the bandit17 account using the obtained SSH private key.",
+            "command": "ssh bandit17@localhost -i /tmp/bandit17_key/sshkey.private",
+            "result": "Initiates an SSH connection to bandit17 on localhost using the specified private key. No password entry is required if the key is correct. Successful login grants access to the bandit17 shell."
+        },
+        {
+            "step_number": 11,
+            "thought": "List files in the bandit17 home directory to find clues for the next password.",
+            "command": "ls",
+            "result": "The `ls` command lists files in the current directory. Two files, `passwords.old` and `passwords.new`, are typically found."
+        },
+        {
+            "step_number": 12,
+            "thought": "Compare `passwords.old` and `passwords.new` to find the line that has changed, which is the bandit18 password.",
+            "command": "diff passwords.old passwords.new",
+            "result": "The `diff` command shows the differences between the two files. The unique line in `passwords.new` is the bandit18 password: `kfBf3eYk5BPBRzwjqutbbfE887SVc5Yd`."
+        },
+        {
+            "step_number": 13,
+            "thought": "Attempt to log in to the bandit18 account using the obtained password. This attempt is expected to fail due to a custom shell configuration.",
+            "command": "ssh bandit18@localhost",
+            "result": "Initiates an SSH connection to bandit18 on localhost. Enter password `kfBf3eYk5BPBRzwjqutbbfE887SVc5Yd` when prompted. The connection is immediately terminated with a 'Byebye!' message, indicating the default shell exits on login."
+        },
+        {
+            "step_number": 14,
+            "thought": "Log in to bandit18 by disabling pseudo-terminal allocation to bypass the automatic logout script.",
+            "command": "ssh -T bandit18@localhost",
+            "result": "Initiates an SSH connection to bandit18 on localhost with `-T` to disable pseudo-tty allocation. Enter password `kfBf3eYk5BPBRzwjqutbbfE887SVc5Yd` when prompted. This should provide a non-interactive shell or allow command execution without immediate logout."
+        },
+        {
+            "step_number": 15,
+            "thought": "Once connected as bandit18 (via `ssh -T`), list files to find the `readme` file containing the next password.",
+            "command": "ls",
+            "result": "Executed within the bandit18 session established in the previous step. The `ls` command lists files in the home directory, revealing a `readme` file."
+        },
+        {
+            "step_number": 16,
+            "thought": "Read the `readme` file to obtain the bandit19 password.",
+            "command": "cat readme",
+            "result": "Executed within the bandit18 session. The `cat readme` command displays the content of the `readme` file, which is the bandit19 password: `IueksS7Ubh8G3DCwVzrTd8rAVOwq3M5x`."
+        },
+        {
+            "step_number": 17,
+            "thought": "Log in to the bandit19 account using the obtained password.",
+            "command": "ssh bandit19@localhost",
+            "result": "Initiates an SSH connection to bandit19 on localhost. Enter the password `IueksS7Ubh8G3DCwVzrTd8rAVOwq3M5x` when prompted. Successful login grants access to the bandit19 shell."
+        },
+        {
+            "step_number": 18,
+            "thought": "List files in the bandit19 home directory to identify any tools or scripts.",
+            "command": "ls",
+            "result": "The `ls` command lists files. An executable file named `bandit20-do` is found."
+        },
+        {
+            "step_number": 19,
+            "thought": "Execute `bandit20-do` without arguments to understand its usage.",
+            "command": "./bandit20-do",
+            "result": "Running the `bandit20-do` script displays its usage instructions, typically indicating it can run commands as another user (bandit20)."
+        },
+        {
+            "step_number": 20,
+            "thought": "Use `bandit20-do` to execute `cat` and read the password file for bandit20.",
+            "command": "./bandit20-do cat /etc/bandit_pass/bandit20",
+            "result": "The `bandit20-do` script executes `cat /etc/bandit_pass/bandit20` with the privileges of bandit20. The output is the bandit20 password: `GbKksEFF4yrVs6il55v6gwY5aVje5f0j`."
+        },
+        {
+            "step_number": 21,
+            "thought": "Log in to the bandit20 account using the obtained password.",
+            "command": "ssh bandit20@localhost",
+            "result": "Initiates an SSH connection to bandit20 on localhost. Enter the password `GbKksEFF4yrVs6il55v6gwY5aVje5f0j` when prompted. Successful login grants access to the bandit20 shell."
+        },
+        {
+            "step_number": 22,
+            "thought": "List files in the bandit20 home directory.",
+            "command": "ls",
+            "result": "The `ls` command lists files. An executable file named `suconnect` is found."
+        },
+        {
+            "step_number": 23,
+            "thought": "Run `suconnect` without arguments to understand its usage. It likely requires a port number.",
+            "command": "./suconnect",
+            "result": "Executing `./suconnect` without arguments shows it requires a port number to connect to."
+        },
+        {
+            "step_number": 24,
+            "thought": "In a separate terminal, start a Netcat listener on an arbitrary port (e.g., 4444) to receive the bandit21 password from `suconnect`.",
+            "command": "nc -lvp 4444",
+            "result": "Netcat starts listening on port 4444 in the separate terminal. This command will block, waiting for an incoming connection. It will display data received on this port."
+        },
+        {
+            "step_number": 25,
+            "thought": "In the primary bandit20 terminal, execute `suconnect`, providing the port Netcat is listening on (4444). Pipe the bandit20 password to `suconnect`'s standard input.",
+            "command": "echo \"GbKksEFF4yrVs6il55v6gwY5aVje5f0j\" | ./suconnect 4444",
+            "result": "`suconnect` reads the bandit20 password from stdin, connects to `localhost:4444`, and sends the bandit21 password to the Netcat listener. The bandit21 password, `gE269g2h3mw3pwgrj0Ha9Uoqen1c9DGr`, will appear in the terminal where `nc` is running."
+        },
+        {
+            "step_number": 26,
+            "thought": "Log in to the bandit21 account using the password obtained from the Netcat listener.",
+            "command": "ssh bandit21@localhost",
+            "result": "Initiates an SSH connection to bandit21 on localhost. Enter the password `gE269g2h3mw3pwgrj0Ha9Uoqen1c9DGr` when prompted. Successful login grants access to the bandit21 shell, completing this stage of the wargame."
+        }
+    ]
+}

